@@ -209,6 +209,13 @@ def _extract_name(soup):
     return ""
 
 
+# Паттерн для поиска группы ароматов в тексте
+_FAMILY_PATTERN = re.compile(
+    r'(?:групп[аеу]?\s+ароматов|ольфакторн\w+\s+групп\w+)\s+'
+    r'[«"]?([А-ЯЁа-яё\s\-]+)',
+)
+
+
 def _extract_family(soup):
     """
     Извлечение группы ароматов (family).
@@ -230,22 +237,14 @@ def _extract_family(soup):
     desc_elem = soup.select_one('[itemprop="description"]')
     if desc_elem:
         desc_text = desc_elem.get_text()
-        match = re.search(
-            r'(?:группе?\s+ароматов|ольфакторн\w+\s+групп\w+)\s+'
-            r'[«"]?([А-ЯЁа-яё\s\-]+)',
-            desc_text,
-        )
+        match = _FAMILY_PATTERN.search(desc_text)
         if match:
             return match.group(1).strip().rstrip(".,;:»\"")
 
     # 3. Ищем в подзаголовке рядом с h1
     subtitle = _select_first_text(soup, ['h1 + p'])
     if subtitle:
-        match = re.search(
-            r'(?:группе?\s+ароматов|ольфакторн\w+\s+групп\w+)\s+'
-            r'[«"]?([А-ЯЁа-яё\s\-]+)',
-            subtitle,
-        )
+        match = _FAMILY_PATTERN.search(subtitle)
         if match:
             return match.group(1).strip().rstrip(".,;:»\"")
 
