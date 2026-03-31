@@ -1,8 +1,11 @@
 """
 Парсер описаний ароматов с сайта fragrantica.ru.
 
-Извлекает: название, бренд, описание, ноты (верхние, средние, базовые),
-основные аккорды, оценку, парфюмера, пол и изображение.
+Извлекает целевые поля: family (группа ароматов), notes (ноты),
+classic (описание аромата).
+
+Включает защиту от ботов: cloudscraper для обхода Cloudflare,
+ротация User-Agent, рандомизированные задержки, retry с откатом.
 
 Использование:
     # Парсинг одной страницы аромата:
@@ -20,59 +23,131 @@ import argparse
 import csv
 import json
 import os
+import random
 import re
 import sys
 import time
 
+import cloudscraper
 import requests
 from bs4 import BeautifulSoup
 
 
 # Задержка между запросами (секунды), чтобы не перегружать сервер
-_DEFAULT_DELAY = 2.0
+# и снизить вероятность блокировки
+_DEFAULT_DELAY = 4.0
 
-# User-Agent для запросов
-_DEFAULT_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/120.0.0.0 Safari/537.36"
-)
+# Максимальное число попыток при ошибке загрузки
+_MAX_RETRIES = 3
+
+# Пул User-Agent для ротации — снижает вероятность обнаружения бота
+_USER_AGENTS = [
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/119.0.0.0 Safari/537.36"
+    ),
+    (
+        "Mozilla/5.0 (X11; Linux x86_64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/121.0.0.0 Safari/537.36"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) "
+        "Gecko/20100101 Firefox/121.0"
+    ),
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        "Version/17.2 Safari/605.1.15"
+    ),
+]
 
 _DEFAULT_HEADERS = {
-    "User-Agent": _DEFAULT_USER_AGENT,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.5,en;q=0.3",
     "Accept-Encoding": "gzip, deflate, br",
     "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
 }
 
 
-def fetch_page(url, session=None, delay=_DEFAULT_DELAY):
+def create_session():
     """
-    Загрузка HTML-страницы по URL.
+    Создание сессии с обходом Cloudflare.
+
+    Использует cloudscraper для автоматического решения
+    JavaScript-challenges, которые fragrantica.ru использует
+    для защиты от ботов.
+
+    Возвращает:
+        Сессия cloudscraper с настроенными заголовками.
+    """
+    scraper = cloudscraper.create_scraper(
+        browser={"browser": "chrome", "platform": "windows", "mobile": False},
+    )
+    scraper.headers.update(_DEFAULT_HEADERS)
+    scraper.headers["User-Agent"] = random.choice(_USER_AGENTS)
+    return scraper
+
+
+def fetch_page(url, session=None, delay=_DEFAULT_DELAY, max_retries=_MAX_RETRIES):
+    """
+    Загрузка HTML-страницы по URL с защитой от блокировки.
 
     Аргументы:
         url: адрес страницы
-        session: объект requests.Session (если None — создаётся новый)
-        delay: задержка перед запросом в секундах
+        session: объект cloudscraper/requests.Session (если None — создаётся)
+        delay: базовая задержка перед запросом в секундах
+        max_retries: максимальное число повторных попыток
 
     Возвращает:
         HTML-содержимое страницы (str).
 
     Исключения:
-        requests.RequestException: при ошибке сети
+        requests.RequestException: при ошибке сети после всех попыток
     """
-    if delay > 0:
-        time.sleep(delay)
-
     if session is None:
-        session = requests.Session()
-        session.headers.update(_DEFAULT_HEADERS)
+        session = create_session()
 
-    response = session.get(url, timeout=30)
-    response.raise_for_status()
-    response.encoding = "utf-8"
-    return response.text
+    last_error = None
+    for attempt in range(1, max_retries + 1):
+        # Рандомизированная задержка для имитации поведения человека
+        jitter = random.uniform(0.5, 1.5)
+        actual_delay = delay * jitter
+        if actual_delay > 0:
+            time.sleep(actual_delay)
+
+        # Ротация User-Agent при каждой попытке
+        session.headers["User-Agent"] = random.choice(_USER_AGENTS)
+
+        try:
+            response = session.get(url, timeout=30)
+            response.raise_for_status()
+            response.encoding = "utf-8"
+            return response.text
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt < max_retries:
+                # Экспоненциальный откат: 4s, 8s, 16s, ...
+                backoff = delay * (2 ** attempt) + random.uniform(0, 2)
+                print(
+                    f"  ⚠ Попытка {attempt}/{max_retries} не удалась: {exc}. "
+                    f"Повтор через {backoff:.1f} сек...",
+                    file=sys.stderr,
+                )
+                time.sleep(backoff)
+
+    raise last_error
 
 
 def parse_perfume_page(html):
@@ -85,37 +160,26 @@ def parse_perfume_page(html):
     Возвращает:
         Словарь с данными аромата:
         {
-            "название": str,
-            "бренд": str,
-            "пол": str,
-            "год_выпуска": str,
-            "описание": str,
-            "парфюмер": str,
-            "верхние_ноты": list[str],
-            "средние_ноты": list[str],
-            "базовые_ноты": list[str],
-            "основные_аккорды": list[str],
-            "оценка": str,
-            "количество_оценок": str,
-            "изображение": str,
+            "name": str,       # Название аромата
+            "family": str,     # Группа ароматов (Цветочные, Восточные и т.д.)
+            "notes": str,      # Все ноты через запятую
+            "classic": str,    # Описание аромата
         }
     """
     soup = BeautifulSoup(html, "html.parser")
     data = {}
 
-    data["название"] = _extract_name(soup)
-    data["бренд"] = _extract_brand(soup)
-    data["пол"] = _extract_gender(soup)
-    data["год_выпуска"] = _extract_year(soup)
-    data["описание"] = _extract_description(soup)
-    data["парфюмер"] = _extract_perfumer(soup)
-    data["верхние_ноты"] = _extract_notes(soup, "top")
-    data["средние_ноты"] = _extract_notes(soup, "middle")
-    data["базовые_ноты"] = _extract_notes(soup, "base")
-    data["основные_аккорды"] = _extract_accords(soup)
-    data["оценка"] = _extract_rating(soup)
-    data["количество_оценок"] = _extract_rating_count(soup)
-    data["изображение"] = _extract_image(soup)
+    data["name"] = _extract_name(soup)
+    data["family"] = _extract_family(soup)
+
+    # Собираем все ноты (верхние + средние + базовые) в одну строку
+    all_notes = []
+    all_notes.extend(_extract_notes(soup, "top"))
+    all_notes.extend(_extract_notes(soup, "middle"))
+    all_notes.extend(_extract_notes(soup, "base"))
+    data["notes"] = ", ".join(all_notes)
+
+    data["classic"] = _extract_description(soup)
 
     return data
 
@@ -142,6 +206,56 @@ def _extract_name(soup):
         # Убираем название бренда из заголовка, если оно вначале
         # Формат часто: "Brand Name Perfume Name"
         return text
+    return ""
+
+
+def _extract_family(soup):
+    """
+    Извлечение группы ароматов (family).
+
+    На fragrantica.ru группа обычно указана:
+    - В тексте «принадлежит к группе ароматов Цветочные»
+    - В ссылках на /groups/
+    - В breadcrumb-навигации
+    """
+    # 1. Ищем ссылки на группу ароматов /groups/
+    for a_tag in soup.find_all("a", href=True):
+        href = a_tag.get("href", "")
+        if "/groups/" in href:
+            text = a_tag.get_text(strip=True)
+            if text:
+                return text
+
+    # 2. Ищем текстовый паттерн «группе ароматов ...» в описании
+    desc_elem = soup.select_one('[itemprop="description"]')
+    if desc_elem:
+        desc_text = desc_elem.get_text()
+        match = re.search(
+            r'(?:группе?\s+ароматов|ольфакторн\w+\s+групп\w+)\s+'
+            r'[«"]?([А-ЯЁа-яё\s\-]+)',
+            desc_text,
+        )
+        if match:
+            return match.group(1).strip().rstrip(".,;:»\"")
+
+    # 3. Ищем в подзаголовке рядом с h1
+    subtitle = _select_first_text(soup, ['h1 + p'])
+    if subtitle:
+        match = re.search(
+            r'(?:группе?\s+ароматов|ольфакторн\w+\s+групп\w+)\s+'
+            r'[«"]?([А-ЯЁа-яё\s\-]+)',
+            subtitle,
+        )
+        if match:
+            return match.group(1).strip().rstrip(".,;:»\"")
+
+    # 4. Ищем breadcrumb с группой
+    for breadcrumb in soup.select(".breadcrumb a, nav a"):
+        href = breadcrumb.get("href", "")
+        text = breadcrumb.get_text(strip=True)
+        if "/groups/" in href and text:
+            return text
+
     return ""
 
 
@@ -379,13 +493,12 @@ def scrape_multiple(urls, delay=_DEFAULT_DELAY):
 
     Аргументы:
         urls: список URL-адресов
-        delay: задержка между запросами
+        delay: базовая задержка между запросами
 
     Возвращает:
         Список словарей с данными ароматов.
     """
-    session = requests.Session()
-    session.headers.update(_DEFAULT_HEADERS)
+    session = create_session()
 
     results = []
     for i, url in enumerate(urls, 1):
@@ -393,7 +506,7 @@ def scrape_multiple(urls, delay=_DEFAULT_DELAY):
         try:
             data = scrape_perfume(url, session=session, delay=delay)
             results.append(data)
-            print(f"  ✓ {data.get('название', 'Без названия')}")
+            print(f"  ✓ {data.get('name', 'Без названия')}")
         except requests.RequestException as e:
             print(f"  ✗ Ошибка загрузки: {e}", file=sys.stderr)
         except Exception as e:
@@ -416,22 +529,11 @@ def save_results(results, filepath):
     elif ext == ".csv":
         if not results:
             return
-        # Развернуть списки в строки через запятую
-        flat_results = []
-        for item in results:
-            flat = {}
-            for key, value in item.items():
-                if isinstance(value, list):
-                    flat[key] = ", ".join(value)
-                else:
-                    flat[key] = value
-            flat_results.append(flat)
-
-        fieldnames = list(flat_results[0].keys())
+        fieldnames = list(results[0].keys())
         with open(filepath, "w", encoding="utf-8", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
-            writer.writerows(flat_results)
+            writer.writerows(results)
     else:
         raise ValueError(f"Неподдерживаемый формат вывода: {ext}. Используйте .json или .csv")
 

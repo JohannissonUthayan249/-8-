@@ -4,11 +4,13 @@ import json
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from fragrantica_scraper import (
     _extract_accords,
     _extract_brand,
     _extract_description,
+    _extract_family,
     _extract_gender,
     _extract_image,
     _extract_name,
@@ -17,6 +19,8 @@ from fragrantica_scraper import (
     _extract_rating,
     _extract_rating_count,
     _extract_year,
+    _USER_AGENTS,
+    create_session,
     parse_perfume_page,
     save_results,
 )
@@ -49,6 +53,7 @@ SAMPLE_PERFUME_HTML = """
 
     <div itemprop="description">
         <p>Sauvage — это мужской аромат от бренда Dior, выпущенный в 2015 году.
+        Этот аромат принадлежит к группе ароматов Фужерные.
         Парфюмер — Франсуа Демаши. Аромат свежий, пряный и древесный.</p>
     </div>
 
@@ -99,6 +104,44 @@ SAMPLE_PERFUME_HTML = """
 </html>
 """
 
+# HTML с ссылкой на группу ароматов через /groups/
+SAMPLE_WITH_GROUP_LINK_HTML = """
+<!DOCTYPE html>
+<html lang="ru">
+<head><title>Test</title></head>
+<body>
+    <h1 itemprop="name">Fontainebleau 12 Parfumeurs Francais</h1>
+    <p>
+        <span itemprop="brand" itemscope>
+            <span itemprop="name">12 Parfumeurs Francais</span>
+        </span>
+    </p>
+    <div>
+        <a href="/groups/Floral.html">Цветочные</a>
+    </div>
+    <div itemprop="description">
+        <p>Fontainebleau от 12 Parfumeurs Francais — это аромат для женщин.</p>
+    </div>
+    <div class="notes-pyramid">
+        <div>
+            <b>Верхние ноты:</b>
+            <span>
+                <a href="/notes/Vanilla.html">Ваниль</a>,
+                <a href="/notes/Sandalwood.html">Сандал</a>
+            </span>
+        </div>
+        <div>
+            <b>Базовые ноты:</b>
+            <span>
+                <a href="/notes/Cedar.html">Кедр</a>,
+                <a href="/notes/Musk.html">Мускус</a>
+            </span>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
 # Минимальный HTML — пустая страница без данных
 MINIMAL_HTML = """
 <!DOCTYPE html>
@@ -135,8 +178,29 @@ class TestParseName(unittest.TestCase):
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(MINIMAL_HTML, "html.parser")
         name = _extract_name(soup)
-        # Даже минимальный HTML имеет какой-то контент — не сломается
         self.assertIsInstance(name, str)
+
+
+class TestParseFamily(unittest.TestCase):
+    """Тесты извлечения группы ароматов (family)."""
+
+    def test_extract_family_from_description(self):
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(SAMPLE_PERFUME_HTML, "html.parser")
+        family = _extract_family(soup)
+        self.assertEqual(family, "Фужерные")
+
+    def test_extract_family_from_group_link(self):
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(SAMPLE_WITH_GROUP_LINK_HTML, "html.parser")
+        family = _extract_family(soup)
+        self.assertEqual(family, "Цветочные")
+
+    def test_extract_family_missing(self):
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(MINIMAL_HTML, "html.parser")
+        family = _extract_family(soup)
+        self.assertEqual(family, "")
 
 
 class TestParseBrand(unittest.TestCase):
@@ -278,49 +342,65 @@ class TestParseImage(unittest.TestCase):
 
 
 class TestParsePerfumePage(unittest.TestCase):
-    """Тесты полного парсинга страницы."""
+    """Тесты полного парсинга страницы — целевые поля."""
 
     def test_full_parse(self):
         data = parse_perfume_page(SAMPLE_PERFUME_HTML)
-        self.assertIn("Sauvage", data["название"])
-        self.assertEqual(data["бренд"], "Dior")
-        self.assertEqual(data["пол"], "для мужчин")
-        self.assertIn("Sauvage", data["описание"])
-        self.assertEqual(data["парфюмер"], "Франсуа Демаши")
-        self.assertIn("Бергамот", data["верхние_ноты"])
-        self.assertIn("Лаванда", data["средние_ноты"])
-        self.assertIn("Амброксан", data["базовые_ноты"])
-        self.assertEqual(len(data["основные_аккорды"]), 4)
-        self.assertEqual(data["оценка"], "4.15")
-        self.assertEqual(data["количество_оценок"], "28450")
-        self.assertTrue(data["изображение"].startswith("https://"))
+        self.assertIn("Sauvage", data["name"])
+        self.assertEqual(data["family"], "Фужерные")
+        # notes — все ноты в одной строке
+        self.assertIn("Бергамот", data["notes"])
+        self.assertIn("Лаванда", data["notes"])
+        self.assertIn("Амброксан", data["notes"])
+        # classic — описание
+        self.assertIn("Sauvage", data["classic"])
+        self.assertIn("2015", data["classic"])
+
+    def test_parse_with_group_link(self):
+        data = parse_perfume_page(SAMPLE_WITH_GROUP_LINK_HTML)
+        self.assertIn("Fontainebleau", data["name"])
+        self.assertEqual(data["family"], "Цветочные")
+        self.assertIn("Ваниль", data["notes"])
+        self.assertIn("Сандал", data["notes"])
+        self.assertIn("Кедр", data["notes"])
+        self.assertIn("Мускус", data["notes"])
+        self.assertIn("Fontainebleau", data["classic"])
 
     def test_partial_parse(self):
         data = parse_perfume_page(PARTIAL_HTML)
-        self.assertIn("Bleu de Chanel", data["название"])
-        self.assertIn("древесный", data["описание"])
-        self.assertEqual(data["оценка"], "4.30")
-        # Ноты и аккорды отсутствуют
-        self.assertEqual(data["верхние_ноты"], [])
-        self.assertEqual(data["основные_аккорды"], [])
+        self.assertIn("Bleu de Chanel", data["name"])
+        self.assertIn("древесный", data["classic"])
+        # Ноты и family отсутствуют
+        self.assertEqual(data["notes"], "")
+        self.assertEqual(data["family"], "")
 
     def test_empty_page(self):
         data = parse_perfume_page(MINIMAL_HTML)
-        # Не падает, возвращает пустые значения
         self.assertIsInstance(data, dict)
-        self.assertIn("название", data)
-        self.assertIn("описание", data)
+        self.assertIn("name", data)
+        self.assertIn("family", data)
+        self.assertIn("notes", data)
+        self.assertIn("classic", data)
 
-    def test_all_keys_present(self):
-        """Проверяем, что все ожидаемые ключи присутствуют."""
+    def test_all_target_keys_present(self):
+        """Проверяем, что все целевые ключи присутствуют."""
         data = parse_perfume_page(MINIMAL_HTML)
-        expected_keys = [
-            "название", "бренд", "пол", "год_выпуска", "описание",
-            "парфюмер", "верхние_ноты", "средние_ноты", "базовые_ноты",
-            "основные_аккорды", "оценка", "количество_оценок", "изображение",
-        ]
+        expected_keys = ["name", "family", "notes", "classic"]
         for key in expected_keys:
             self.assertIn(key, data)
+
+    def test_notes_combined_as_string(self):
+        """notes — все ноты объединены в строку через запятую."""
+        data = parse_perfume_page(SAMPLE_PERFUME_HTML)
+        self.assertIsInstance(data["notes"], str)
+        notes_list = [n.strip() for n in data["notes"].split(",")]
+        # Верхние
+        self.assertIn("Бергамот", notes_list)
+        self.assertIn("Перец", notes_list)
+        # Средние
+        self.assertIn("Лаванда", notes_list)
+        # Базовые
+        self.assertIn("Кедр", notes_list)
 
 
 class TestSaveResults(unittest.TestCase):
@@ -341,7 +421,10 @@ class TestSaveResults(unittest.TestCase):
             with open(path, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
             self.assertEqual(len(loaded), 1)
-            self.assertIn("Sauvage", loaded[0]["название"])
+            self.assertIn("Sauvage", loaded[0]["name"])
+            self.assertIn("family", loaded[0])
+            self.assertIn("notes", loaded[0])
+            self.assertIn("classic", loaded[0])
         finally:
             os.unlink(path)
 
@@ -356,8 +439,11 @@ class TestSaveResults(unittest.TestCase):
             save_results(data, path)
             with open(path, "r", encoding="utf-8") as f:
                 content = f.read()
+            self.assertIn("name", content)
+            self.assertIn("family", content)
+            self.assertIn("notes", content)
+            self.assertIn("classic", content)
             self.assertIn("Sauvage", content)
-            self.assertIn("Dior", content)
         finally:
             os.unlink(path)
 
@@ -388,6 +474,39 @@ class TestGenderExtraction(unittest.TestCase):
         html = '<html><body><h1>Test</h1><p><small>для женщин</small></p></body></html>'
         soup = BeautifulSoup(html, "html.parser")
         self.assertEqual(_extract_gender(soup), "для женщин")
+
+
+class TestAntiBot(unittest.TestCase):
+    """Тесты защиты от ботов."""
+
+    def test_create_session_returns_scraper(self):
+        """create_session возвращает cloudscraper-сессию."""
+        session = create_session()
+        # cloudscraper наследует от requests.Session
+        import requests
+        self.assertIsInstance(session, requests.Session)
+
+    def test_session_has_headers(self):
+        """Сессия имеет настроенные заголовки."""
+        session = create_session()
+        self.assertIn("User-Agent", session.headers)
+        self.assertIn("Accept-Language", session.headers)
+        self.assertIn("Sec-Fetch-Dest", session.headers)
+
+    def test_user_agent_rotation(self):
+        """User-Agent берётся из пула."""
+        session = create_session()
+        ua = session.headers.get("User-Agent", "")
+        self.assertIn(ua, _USER_AGENTS)
+
+    def test_multiple_sessions_different_ua(self):
+        """Разные сессии могут иметь разные User-Agent (вероятностно)."""
+        agents = set()
+        for _ in range(20):
+            session = create_session()
+            agents.add(session.headers.get("User-Agent", ""))
+        # При 20 попытках с 5 вариантами почти наверняка будет >1
+        self.assertGreater(len(agents), 1)
 
 
 if __name__ == "__main__":
