@@ -1,0 +1,249 @@
+{
+  "name": "Lead Intake Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-intake",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-node",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "lead-intake"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Lead Router — обработка и роутинг лида\n\nfunction normalizeText(value) {\n  return String(value ?? '').trim();\n}\n\nfunction normalizeEmail(value) {\n  return normalizeText(value).toLowerCase();\n}\n\nfunction normalizePhone(value) {\n  return normalizeText(value).replace(/[^\\d+]/g, '');\n}\n\n// Получаем данные из Webhook\n// В режиме \"Run Once for All Items\" данные доступны через items\nconst results = [];\n\nfor (const item of items) {\n  const input = item.json;\n\n  const lead = {\n    name: normalizeText(input.name),\n    email: normalizeEmail(input.email),\n    phone: normalizePhone(input.phone),\n    priority: normalizeText(input.priority) || 'normal',\n    message: normalizeText(input.message),\n    submitted_at: input.submitted_at || new Date().toISOString(),\n    hasEmail: normalizeEmail(input.email).length > 0,\n    hasPhone: normalizePhone(input.phone).length > 0,\n    isHighPriority: ['high', 'urgent'].includes(normalizeText(input.priority)),\n    writeToSheet: true,\n    notifyTelegram: true,\n    sendEmail: normalizeEmail(input.email).length > 0,\n  };\n\n  results.push({ json: lead });\n}\n\nreturn results;\n",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "lead-router-node",
+      "name": "Lead Router",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.writeToSheet}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-write-to-sheet-node",
+      "name": "IF Write To Sheet",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [680, 180]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.notifyTelegram}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-notify-telegram-node",
+      "name": "IF Notify Telegram",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.sendEmail}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-send-email-node",
+      "name": "IF Send Email",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [680, 420]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Name": "={{$json.name}}",
+            "Email": "={{$json.email}}",
+            "Phone": "={{$json.phone}}",
+            "Priority": "={{$json.priority}}",
+            "Message": "={{$json.message}}",
+            "Submitted At": "={{$json.submitted_at}}"
+          }
+        }
+      },
+      "id": "google-sheets-node",
+      "name": "Google Sheets Leads",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [900, 140]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot{{$credentials.token}}/sendMessage",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": ""
+            },
+            {
+              "name": "text",
+              "value": "=🔔 Новый лид!\n\nИмя: {{$json.name}}\nEmail: {{$json.email}}\nТелефон: {{$json.phone}}\nПриоритет: {{$json.priority}}\nСообщение: {{$json.message}}\nВремя: {{$json.submitted_at}}"
+            },
+            {
+              "name": "parse_mode",
+              "value": "HTML"
+            }
+          ]
+        }
+      },
+      "id": "telegram-alert-node",
+      "name": "Telegram Manager Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [900, 260]
+    },
+    {
+      "parameters": {
+        "fromEmail": "",
+        "toEmail": "={{$json.email}}",
+        "subject": "Спасибо за заявку!",
+        "emailType": "html",
+        "message": "=<h2>Здравствуйте, {{$json.name}}!</h2>\n<p>Спасибо за вашу заявку. Мы свяжемся с вами в ближайшее время.</p>\n<p>С уважением, команда</p>"
+      },
+      "id": "send-email-node",
+      "name": "Send Auto Reply",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [900, 420]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"status\": \"success\", \"message\": \"Заявка принята\"}",
+        "options": {}
+      },
+      "id": "respond-to-webhook-node",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 560]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Lead Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead Router": {
+      "main": [
+        [
+          {
+            "node": "IF Write To Sheet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF Notify Telegram",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF Send Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Write To Sheet": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets Leads",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "IF Notify Telegram": {
+      "main": [
+        [
+          {
+            "node": "Telegram Manager Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "IF Send Email": {
+      "main": [
+        [
+          {
+            "node": "Send Auto Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-03-31T19:00:00.000Z",
+  "versionId": "1"
+}
