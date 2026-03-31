@@ -363,8 +363,15 @@ class TestSaveResults(unittest.TestCase):
 
     def test_save_unsupported_format(self):
         data = self._get_sample_data()
-        with self.assertRaises(ValueError):
-            save_results(data, "/tmp/test.xyz")
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".xyz", delete=False
+        ) as f:
+            path = f.name
+        try:
+            with self.assertRaises(ValueError):
+                save_results(data, path)
+        finally:
+            os.unlink(path)
 
 
 class TestGenderExtraction(unittest.TestCase):
