@@ -1,0 +1,380 @@
+{
+  "name": "Telegram Bot Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message", "callback_query"]
+      },
+      "id": "telegram-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 400],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-cred",
+          "name": "Telegram API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const update = $input.first().json;\n\nlet action = '';\nlet chat_id = '';\nlet message_text = '';\n\nif (update.body?.callback_query) {\n  action = update.body.callback_query.data;\n  chat_id = update.body.callback_query.message.chat.id;\n  message_text = update.body.callback_query.data;\n} else if (update.body?.message?.text) {\n  action = update.body.message.text;\n  chat_id = update.body.message.chat.id;\n  message_text = update.body.message.text;\n}\n\nreturn [{ json: { action, chat_id, message_text } }];"
+      },
+      "id": "code-router",
+      "name": "Code Router",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-подобрать",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "подобрать",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-node",
+      "name": "If",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [480, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst chat_id = items[0].json.chat_id;\n\nreturn [{ json: { chat_id } }];"
+      },
+      "id": "code-in-javascript",
+      "name": "Code in JavaScript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 200]
+    },
+    {
+      "parameters": {
+        "url": "https://example.com/api/select",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $json.chat_id }}"
+            }
+          ]
+        }
+      },
+      "id": "http-request",
+      "name": "HTTP Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst data = items[0].json;\n\nreturn [{ json: data }];"
+      },
+      "id": "code-in-javascript1",
+      "name": "Code in JavaScript1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 200]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $credentials.telegramApi.token }}/sendMessage",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $json.chat_id }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ $json.text }}"
+            }
+          ]
+        }
+      },
+      "id": "telegram-api",
+      "name": "Telegram API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 200],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-cred",
+          "name": "Telegram API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-ai",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "/start",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-ai",
+      "name": "IF AI",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [720, 600]
+    },
+    {
+      "parameters": {
+        "url": "https://api.openai.com/v1/chat/completions",
+        "method": "POST",
+        "authentication": "predefinedCredentialType",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "gpt-4o"
+            },
+            {
+              "name": "messages",
+              "value": "={{ JSON.stringify([{role: 'user', content: $json.message_text}]) }}"
+            }
+          ]
+        }
+      },
+      "id": "openai-response",
+      "name": "OpenAI Response",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 500],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openai-cred",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst response = items[0].json;\n\nconst reply = response.choices?.[0]?.message?.content || 'Нет ответа от AI';\nconst chat_id = items[0].json.chat_id || $('Code Router').first().json.chat_id;\n\nreturn [{ json: { chat_id, text: reply } }];"
+      },
+      "id": "build-ai-reply",
+      "name": "Build AI Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 500]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $credentials.telegramApi.token }}/sendMessage",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $json.chat_id }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ $json.text }}"
+            }
+          ]
+        }
+      },
+      "id": "telegram-ai-reply",
+      "name": "Telegram AI Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 500],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-cred",
+          "name": "Telegram API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $credentials.telegramApi.token }}/sendMessage",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $json.chat_id }}"
+            },
+            {
+              "name": "text",
+              "value": "Добро пожаловать! Выберите действие:"
+            },
+            {
+              "name": "reply_markup",
+              "value": "={{ JSON.stringify({inline_keyboard: [[{text: 'Подобрать', callback_data: 'подобрать'}]]}) }}"
+            }
+          ]
+        }
+      },
+      "id": "telegram-api1",
+      "name": "Telegram API1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 740],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-cred",
+          "name": "Telegram API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code Router": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Telegram API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF AI": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram API1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Response": {
+      "main": [
+        [
+          {
+            "node": "Build AI Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build AI Reply": {
+      "main": [
+        [
+          {
+            "node": "Telegram AI Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
