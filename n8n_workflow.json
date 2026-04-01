@@ -3,13 +3,19 @@
   "nodes": [
     {
       "parameters": {
-        "updates": ["message", "callback_query"]
+        "updates": [
+          "message",
+          "callback_query"
+        ]
       },
       "id": "telegram-trigger",
       "name": "Telegram Trigger",
       "type": "n8n-nodes-base.telegramTrigger",
       "typeVersion": 1.1,
-      "position": [0, 400],
+      "position": [
+        0,
+        400
+      ],
       "credentials": {
         "telegramApi": {
           "id": "telegram-cred",
@@ -19,139 +25,103 @@
     },
     {
       "parameters": {
-        "jsCode": "const update = $input.first().json;\n\nlet action = '';\nlet chat_id = '';\nlet message_text = '';\n\nif (update.body?.callback_query) {\n  action = update.body.callback_query.data;\n  chat_id = update.body.callback_query.message.chat.id;\n  message_text = update.body.callback_query.data;\n} else if (update.body?.message?.text) {\n  action = update.body.message.text;\n  chat_id = update.body.message.chat.id;\n  message_text = update.body.message.text;\n}\n\nreturn [{ json: { action, chat_id, message_text } }];"
+        "jsCode": "const mainKeyboard = {\n  inline_keyboard: [\n    [{ text: '📖 Каталог ароматов', callback_data: 'catalog' }],\n    [{ text: '✨ Подобрать', callback_data: 'pick' }],\n    [{ text: '🎓 Инфо', callback_data: 'info' }],\n  ],\n};\n\nconst catalogKeyboard = {\n  inline_keyboard: [\n    [{ text: '🌸 Цветочные', callback_data: 'category:flowers' }],\n    [{ text: '🌲 Древесные', callback_data: 'category:wood' }],\n    [{ text: '🌙 Восточные', callback_data: 'category:oriental' }],\n    [{ text: '🍋 Цитрусовые', callback_data: 'category:citrus' }],\n    [{ text: '⬅️ Назад', callback_data: 'back' }],\n  ],\n};\n\nreturn $input.all().map((item) => {\n  const update = item.json.body ?? item.json;\n  const message = update.message ?? null;\n  const callbackQuery = update.callback_query ?? null;\n\n  const chatId = message?.chat?.id ?? callbackQuery?.message?.chat?.id ?? null;\n  const userId = message?.from?.id ?? callbackQuery?.from?.id ?? null;\n  const messageId = message?.message_id ?? callbackQuery?.message?.message_id ?? null;\n  const callbackQueryId = callbackQuery?.id ?? null;\n  const text = (message?.text ?? callbackQuery?.data ?? '').trim();\n\n  const output = {\n    chatId,\n    userId,\n    messageId,\n    callbackQueryId,\n    originalText: text,\n    shouldCallAi: false,\n    telegramMethod: '',\n    telegramPayload: {},\n    aiPrompt: '',\n    routeType: 'telegram',\n    categoryKey: '',\n    airtableFormula: '',\n  };\n\n  if (!chatId) {\n    return { json: output };\n  }\n\n  if (callbackQuery) {\n    if (text === 'catalog') {\n      output.telegramMethod = 'sendMessage';\n      output.telegramPayload = {\n        chat_id: chatId,\n        text: '🌿 Выберите категорию аромата:',\n        reply_markup: catalogKeyboard,\n      };\n      return { json: output };\n    }\n\n    if (text.startsWith('category:')) {\n      const categoryKey = text.split(':')[1];\n      output.routeType = 'airtable';\n      output.telegramMethod = 'airtable_lookup';\n      output.categoryKey = categoryKey;\n      output.airtableFormula = `{category_key}='${categoryKey}'`;\n      return { json: output };\n    }\n\n    if (text === 'pick') {\n      output.shouldCallAi = true;\n      output.routeType = 'ai';\n      output.aiPrompt = 'Ты персональный парфюмерный консультант в Telegram. Отвечай по-русски, дружелюбно, коротко и по делу. Помогай подобрать аромат по вкусу, настроению, сезону, случаю и характеру человека. Если данных мало, задай 1-2 уточняющих вопроса. Пользователь нажал кнопку \"Подобрать\". Начни диалог с фразы: \"С удовольствием помогу подобрать аромат. Расскажи, что тебе ближе: свежие, сладкие, древесные, цветочные, цитрусовые или восточные ароматы?\"';\n      return { json: output };\n    }\n\n    if (text === 'info') {\n      output.telegramMethod = 'sendMessage';\n      output.telegramPayload = {\n        chat_id: chatId,\n        text: 'Я могу показать категории ароматов, помочь с подбором и ответить на вопросы о парфюмерии.',\n      };\n      return { json: output };\n    }\n\n    if (text === 'back') {\n      output.telegramMethod = 'sendPhoto';\n      output.telegramPayload = {\n        chat_id: chatId,\n        photo: 'https://i.ibb.co/CKHw7tLj/photo-2026-03-05-22-07-48.jpg',\n        caption: 'Привет! Я твой персональный парфюмерный гид. Помогу подобрать аромат под настроение или расширить твои знания о мире парфюма. С чего начнем?',\n        reply_markup: mainKeyboard,\n      };\n      return { json: output };\n    }\n  }\n\n  if (text === '/start') {\n    output.telegramMethod = 'sendPhoto';\n    output.telegramPayload = {\n      chat_id: chatId,\n      photo: 'https://i.ibb.co/CKHw7tLj/photo-2026-03-05-22-07-48.jpg',\n      caption: 'Привет! Я твой персональный парфюмерный гид. Помогу подобрать аромат под настроение или расширить твои знания о мире парфюма. С чего начнем?',\n      reply_markup: mainKeyboard,\n    };\n    return { json: output };\n  }\n\n  output.shouldCallAi = true;\n  output.routeType = 'ai';\n  output.aiPrompt = `Ты персональный парфюмерный Telegram-бот. Отвечай по-русски, дружелюбно, коротко и по делу. Если пользователь просит подбор аромата, помоги как консультант. Сообщение пользователя: ${text}`;\n\n  return { json: output };\n});"
       },
       "id": "code-router",
       "name": "Code Router",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [240, 400]
+      "position": [
+        240,
+        400
+      ]
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
+        "rules": {
+          "values": [
             {
-              "id": "condition-подобрать",
-              "leftValue": "={{ $json.action }}",
-              "rightValue": "подобрать",
-              "operator": {
-                "type": "string",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        }
-      },
-      "id": "if-node",
-      "name": "If",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [480, 400]
-    },
-    {
-      "parameters": {
-        "jsCode": "const items = $input.all();\nconst chat_id = items[0].json.chat_id;\n\nreturn [{ json: { chat_id } }];"
-      },
-      "id": "code-in-javascript",
-      "name": "Code in JavaScript",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [720, 200]
-    },
-    {
-      "parameters": {
-        "url": "https://example.com/api/select",
-        "method": "POST",
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "chat_id",
-              "value": "={{ $json.chat_id }}"
-            }
-          ]
-        }
-      },
-      "id": "http-request",
-      "name": "HTTP Request",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [960, 200]
-    },
-    {
-      "parameters": {
-        "jsCode": "const items = $input.all();\nconst data = items[0].json;\n\nreturn [{ json: data }];"
-      },
-      "id": "code-in-javascript1",
-      "name": "Code in JavaScript1",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1200, 200]
-    },
-    {
-      "parameters": {
-        "url": "=https://api.telegram.org/bot{{ $credentials.telegramApi.token }}/sendMessage",
-        "method": "POST",
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "chat_id",
-              "value": "={{ $json.chat_id }}"
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.routeType }}",
+                    "rightValue": "telegram",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "telegram"
             },
             {
-              "name": "text",
-              "value": "={{ $json.text }}"
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.routeType }}",
+                    "rightValue": "ai",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "ai"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.routeType }}",
+                    "rightValue": "airtable",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "airtable"
             }
           ]
         }
       },
-      "id": "telegram-api",
-      "name": "Telegram API",
+      "id": "switch-route",
+      "name": "Route Switch",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        480,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $credentials.telegramApi.token }}/{{ $json.telegramMethod }}",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.telegramPayload) }}"
+      },
+      "id": "telegram-send",
+      "name": "Telegram Send",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1440, 200],
+      "position": [
+        720,
+        200
+      ],
       "credentials": {
         "telegramApi": {
           "id": "telegram-cred",
           "name": "Telegram API"
         }
       }
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "condition-ai",
-              "leftValue": "={{ $json.action }}",
-              "rightValue": "/start",
-              "operator": {
-                "type": "string",
-                "operation": "notEquals"
-              }
-            }
-          ],
-          "combinator": "and"
-        }
-      },
-      "id": "if-ai",
-      "name": "IF AI",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [720, 600]
     },
     {
       "parameters": {
@@ -159,24 +129,17 @@
         "method": "POST",
         "authentication": "predefinedCredentialType",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "model",
-              "value": "gpt-4o"
-            },
-            {
-              "name": "messages",
-              "value": "={{ JSON.stringify([{role: 'user', content: $json.message_text}]) }}"
-            }
-          ]
-        }
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o', messages: [{ role: 'system', content: $json.aiPrompt }, { role: 'user', content: $json.originalText }] }) }}"
       },
-      "id": "openai-response",
-      "name": "OpenAI Response",
+      "id": "openai-request",
+      "name": "OpenAI Request",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [960, 500],
+      "position": [
+        720,
+        500
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "openai-cred",
@@ -186,13 +149,16 @@
     },
     {
       "parameters": {
-        "jsCode": "const items = $input.all();\nconst response = items[0].json;\n\nconst reply = response.choices?.[0]?.message?.content || 'Нет ответа от AI';\nconst chat_id = items[0].json.chat_id || $('Code Router').first().json.chat_id;\n\nreturn [{ json: { chat_id, text: reply } }];"
+        "jsCode": "const items = $input.all();\nconst response = items[0].json;\nconst chatId = $('Code Router').first().json.chatId;\n\nconst reply = response.choices?.[0]?.message?.content || 'Нет ответа от AI';\n\nreturn [{ json: { chatId, text: reply } }];"
       },
       "id": "build-ai-reply",
       "name": "Build AI Reply",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1200, 500]
+      "position": [
+        960,
+        500
+      ]
     },
     {
       "parameters": {
@@ -203,7 +169,7 @@
           "parameters": [
             {
               "name": "chat_id",
-              "value": "={{ $json.chat_id }}"
+              "value": "={{ $json.chatId }}"
             },
             {
               "name": "text",
@@ -216,7 +182,10 @@
       "name": "Telegram AI Reply",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1440, 500],
+      "position": [
+        1200,
+        500
+      ],
       "credentials": {
         "telegramApi": {
           "id": "telegram-cred",
@@ -226,37 +195,16 @@
     },
     {
       "parameters": {
-        "url": "=https://api.telegram.org/bot{{ $credentials.telegramApi.token }}/sendMessage",
-        "method": "POST",
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "chat_id",
-              "value": "={{ $json.chat_id }}"
-            },
-            {
-              "name": "text",
-              "value": "Добро пожаловать! Выберите действие:"
-            },
-            {
-              "name": "reply_markup",
-              "value": "={{ JSON.stringify({inline_keyboard: [[{text: 'Подобрать', callback_data: 'подобрать'}]]}) }}"
-            }
-          ]
-        }
+        "jsCode": "const items = $input.all();\nconst data = items[0].json;\nconst categoryKey = data.categoryKey;\nconst chatId = data.chatId;\n\n// Placeholder: Airtable lookup would go here\nreturn [{ json: { chatId, categoryKey, airtableFormula: data.airtableFormula } }];"
       },
-      "id": "telegram-api1",
-      "name": "Telegram API1",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [960, 740],
-      "credentials": {
-        "telegramApi": {
-          "id": "telegram-cred",
-          "name": "Telegram API"
-        }
-      }
+      "id": "airtable-lookup",
+      "name": "Airtable Lookup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        740
+      ]
     }
   ],
   "connections": {
@@ -275,83 +223,39 @@
       "main": [
         [
           {
-            "node": "If",
+            "node": "Route Switch",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "If": {
+    "Route Switch": {
       "main": [
         [
           {
-            "node": "Code in JavaScript",
+            "node": "Telegram Send",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "IF AI",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Code in JavaScript": {
-      "main": [
-        [
-          {
-            "node": "HTTP Request",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "HTTP Request": {
-      "main": [
-        [
-          {
-            "node": "Code in JavaScript1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Code in JavaScript1": {
-      "main": [
-        [
-          {
-            "node": "Telegram API",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "IF AI": {
-      "main": [
-        [
-          {
-            "node": "OpenAI Response",
+            "node": "OpenAI Request",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Telegram API1",
+            "node": "Airtable Lookup",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "OpenAI Response": {
+    "OpenAI Request": {
       "main": [
         [
           {

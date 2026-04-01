@@ -1,144 +1,99 @@
 # -8-
-n8n Telegram Bot Workflow
+n8n Telegram Bot Workflow — Парфюмерный гид
 
 ## Описание
-n8n воркфлоу для Telegram-бота с функциями подбора и AI-ответов.
 
-### Схема маршрутизации
-```
-Telegram Trigger → Code Router → If (action == "подобрать"?)
-                                   ├─ true  → Code in JavaScript → HTTP Request → Code in JavaScript1 → Telegram API
-                                   └─ false → IF AI (action != "/start"?)
-                                               ├─ true  → OpenAI Response → Build AI Reply → Telegram AI Reply
-                                               └─ false → Telegram API1 (приветствие /start)
-```
+n8n воркфлоу для Telegram-бота — парфюмерного гида с каталогом ароматов, AI-подбором через OpenAI GPT-4o и интеграцией с Airtable.
 
----
+### Функции бота
 
-## Проблема
-При нажатии на `/start` приходило сообщение с кнопки «подобрать» вместо приветствия.
-
-## Причина
-В узле **Code Router** не различались:
-- команда `/start` (приходит как `message.text`)
-- нажатие кнопки «Подобрать» (приходит как `callback_query.data`)
-
-Оба типа входящих данных записывались в одно поле `action` без проверки источника, и узел **If** не мог корректно их разделить.
+| Команда / кнопка | Что делает |
+|-----------------|------------|
+| `/start` | Приветствие с фото + главное меню (inline-кнопки) |
+| 📖 Каталог ароматов | Показывает категории: цветочные, древесные, восточные, цитрусовые |
+| ✨ Подобрать | AI-консультант помогает выбрать аромат |
+| 🎓 Инфо | Краткая справка о возможностях бота |
+| ⬅️ Назад | Возврат в главное меню |
+| Категория (🌸/🌲/🌙/🍋) | Поиск ароматов по категории в Airtable |
+| Произвольный текст | AI-ответ от GPT-4o |
 
 ---
 
-## Как исправить — пошаговая инструкция
-
-### Шаг 1. Откройте узел «Telegram Trigger»
-
-Убедитесь, что в настройках **Updates** выбраны оба типа:
-- ✅ `message`
-- ✅ `callback_query`
-
-Это нужно, чтобы бот получал и текстовые команды (`/start`), и нажатия на inline-кнопки (`подобрать`).
-
----
-
-### Шаг 2. Откройте узел «Code Router» и замените код
-
-Это **главный шаг** — именно здесь была ошибка. Откройте узел **Code Router** (тип: Code) и вставьте этот код:
-
-```javascript
-const update = $input.first().json;
-
-let action = '';
-let chat_id = '';
-let message_text = '';
-
-// 1. Проверяем: это нажатие inline-кнопки (callback_query)?
-if (update.body?.callback_query) {
-  action = update.body.callback_query.data;          // "подобрать"
-  chat_id = update.body.callback_query.message.chat.id;
-  message_text = update.body.callback_query.data;
-
-// 2. Или это текстовое сообщение / команда (message)?
-} else if (update.body?.message?.text) {
-  action = update.body.message.text;                  // "/start"
-  chat_id = update.body.message.chat.id;
-  message_text = update.body.message.text;
-}
-
-return [{ json: { action, chat_id, message_text } }];
-```
-
-**Что изменилось:**
-- Сначала проверяется `callback_query` — если пользователь нажал кнопку, `action` = `callback_query.data` (например, `"подобрать"`)
-- Иначе проверяется `message.text` — если пользователь написал команду, `action` = текст сообщения (например, `"/start"`)
-- Порядок `if/else` важен: callback_query проверяется **первым**, потому что при нажатии кнопки Telegram присылает и callback_query, и message одновременно
-
----
-
-### Шаг 3. Откройте узел «If» и проверьте условие
-
-Убедитесь, что условие настроено так:
-
-| Поле | Значение |
-|------|----------|
-| **Value 1** | `{{ $json.action }}` |
-| **Operation** | `equals` (равно) |
-| **Value 2** | `подобрать` |
-
-- ✅ **true** (верхний выход) → идёт в **Code in JavaScript** (ветка подбора)
-- ❌ **false** (нижний выход) → идёт в **IF AI**
-
-Если `/start` — action = `"/start"`, что ≠ `"подобрать"` → идёт в false → **IF AI**. Это правильно.
-
----
-
-### Шаг 4. Откройте узел «IF AI» и проверьте условие
-
-Убедитесь, что условие настроено так:
-
-| Поле | Значение |
-|------|----------|
-| **Value 1** | `{{ $json.action }}` |
-| **Operation** | `not equals` (не равно) |
-| **Value 2** | `/start` |
-
-- ✅ **true** (верхний выход) → action ≠ `/start` → пользователь написал произвольный текст → идёт в **OpenAI Response** (AI-ответ)
-- ❌ **false** (нижний выход) → action = `/start` → идёт в **Telegram API1** (приветственное сообщение)
-
----
-
-### Шаг 5. Проверьте узел «Telegram API1» (приветствие)
-
-Убедитесь, что этот узел отправляет приветственное сообщение с кнопкой:
-
-| Параметр | Значение |
-|----------|----------|
-| **chat_id** | `{{ $json.chat_id }}` |
-| **text** | `Добро пожаловать! Выберите действие:` |
-| **reply_markup** | `{{ JSON.stringify({inline_keyboard: [[{text: 'Подобрать', callback_data: 'подобрать'}]]}) }}` |
-
----
-
-### Шаг 6. Проверьте соединения между узлами
-
-Убедитесь, что связи (стрелки) между узлами выглядят так:
+## Архитектура воркфлоу
 
 ```
-Telegram Trigger ──→ Code Router ──→ If
-                                      ├── true  ──→ Code in JavaScript ──→ HTTP Request ──→ Code in JavaScript1 ──→ Telegram API
-                                      └── false ──→ IF AI
-                                                     ├── true  ──→ OpenAI Response ──→ Build AI Reply ──→ Telegram AI Reply
-                                                     └── false ──→ Telegram API1
+Telegram Trigger → Code Router → Route Switch
+                                   ├─ telegram → Telegram Send (sendMessage / sendPhoto)
+                                   ├─ ai       → OpenAI Request → Build AI Reply → Telegram AI Reply
+                                   └─ airtable → Airtable Lookup (placeholder)
 ```
 
-Если стрелка от **If (false)** идёт куда-то не в **IF AI**, или от **IF AI (false)** не в **Telegram API1** — перетяните её правильно.
+### Узлы (8 шт.)
+
+| # | Узел | Тип | Назначение |
+|---|------|-----|------------|
+| 1 | Telegram Trigger | telegramTrigger | Получает message + callback_query |
+| 2 | Code Router | code | Вся логика маршрутизации в одном узле |
+| 3 | Route Switch | switch | Роутит по `routeType`: telegram / ai / airtable |
+| 4 | Telegram Send | httpRequest | Отправляет сообщения/фото через Telegram API |
+| 5 | OpenAI Request | httpRequest | Запрос к GPT-4o |
+| 6 | Build AI Reply | code | Формирует ответ из OpenAI response |
+| 7 | Telegram AI Reply | httpRequest | Отправляет AI-ответ пользователю |
+| 8 | Airtable Lookup | code | Placeholder для поиска по Airtable |
 
 ---
 
-## Проверка результата
+## Code Router — логика маршрутизации
 
-После исправления протестируйте:
+Code Router — центральный узел. Он определяет тип входящего сообщения и формирует структурированный output:
 
-| Действие пользователя | Ожидаемый результат |
-|-----------------------|---------------------|
-| Отправить `/start` | Бот присылает приветствие «Добро пожаловать! Выберите действие:» с кнопкой «Подобрать» |
-| Нажать кнопку «Подобрать» | Бот запускает ветку подбора (Code in JavaScript → HTTP Request → ...) |
-| Написать произвольный текст | Бот отправляет текст в OpenAI и возвращает AI-ответ |
+### Выходные поля
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `chatId` | number | ID чата Telegram |
+| `userId` | number | ID пользователя |
+| `messageId` | number | ID сообщения |
+| `callbackQueryId` | string | ID callback_query (для inline-кнопок) |
+| `originalText` | string | Текст сообщения или callback_data |
+| `shouldCallAi` | boolean | Нужно ли вызывать OpenAI |
+| `telegramMethod` | string | Метод Telegram API: sendMessage / sendPhoto |
+| `telegramPayload` | object | Готовый payload для Telegram API |
+| `aiPrompt` | string | Системный промпт для OpenAI |
+| `routeType` | string | Маршрут: `telegram` / `ai` / `airtable` |
+| `categoryKey` | string | Ключ категории для Airtable |
+| `airtableFormula` | string | Формула для поиска в Airtable |
+
+### Таблица маршрутизации
+
+| Вход | routeType | Действие |
+|------|-----------|----------|
+| `/start` (message) | telegram | sendPhoto с приветствием + mainKeyboard |
+| `catalog` (callback) | telegram | sendMessage с catalogKeyboard |
+| `pick` (callback) | ai | AI-промпт для подбора аромата |
+| `info` (callback) | telegram | sendMessage со справкой |
+| `back` (callback) | telegram | sendPhoto с mainKeyboard (возврат) |
+| `category:*` (callback) | airtable | Поиск по категории в Airtable |
+| Произвольный текст | ai | AI-промпт с текстом пользователя |
+
+---
+
+## Исправленная ошибка из предыдущей версии
+
+**Проблема:** При `/start` приходило сообщение от ветки «подобрать».
+
+**Решение:** Code Router теперь корректно разделяет `callback_query.data` (кнопки) и `message.text` (команды). Вся логика — в одном узле, что исключает ошибки маршрутизации между отдельными If-нодами.
+
+---
+
+## Проверка после импорта
+
+| Действие | Ожидаемый результат |
+|----------|---------------------|
+| `/start` | Фото + приветствие + 3 кнопки (Каталог, Подобрать, Инфо) |
+| Кнопка «📖 Каталог ароматов» | Список категорий с кнопками |
+| Кнопка «✨ Подобрать» | AI начинает диалог о подборе аромата |
+| Кнопка «🎓 Инфо» | Справка о боте |
+| Кнопка «⬅️ Назад» | Возврат в главное меню с фото |
+| Категория (🌸/🌲/🌙/🍋) | Поиск в Airtable (нужна настройка) |
+| Произвольный текст | AI-ответ от GPT-4o |
