@@ -3,14 +3,19 @@
   "nodes": [
     {
       "parameters": {
-        "updates": ["message"],
+        "updates": [
+          "message"
+        ],
         "additionalFields": {}
       },
       "id": "telegram-trigger",
       "name": "Telegram Trigger",
       "type": "n8n-nodes-base.telegramTrigger",
       "typeVersion": 1.1,
-      "position": [220, 300],
+      "position": [
+        220,
+        300
+      ],
       "credentials": {
         "telegramApi": {
           "id": "TELEGRAM_CREDENTIALS_ID",
@@ -47,7 +52,10 @@
       "name": "Проверка наличия аудио",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [440, 300],
+      "position": [
+        440,
+        300
+      ],
       "notes": "Проверяет, содержит ли сообщение аудиофайл (voice, audio или document)."
     },
     {
@@ -60,7 +68,10 @@
       "name": "Ответ: нет аудио",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [660, 460],
+      "position": [
+        660,
+        460
+      ],
       "credentials": {
         "telegramApi": {
           "id": "TELEGRAM_CREDENTIALS_ID",
@@ -79,7 +90,10 @@
       "name": "Уведомление о начале обработки",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [660, 160],
+      "position": [
+        660,
+        160
+      ],
       "credentials": {
         "telegramApi": {
           "id": "TELEGRAM_CREDENTIALS_ID",
@@ -98,7 +112,10 @@
       "name": "Получить информацию о файле",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [880, 160],
+      "position": [
+        880,
+        160
+      ],
       "credentials": {
         "telegramApi": {
           "id": "TELEGRAM_CREDENTIALS_ID",
@@ -122,8 +139,14 @@
       "name": "Скачать аудиофайл",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1100, 160],
-      "notes": "Скачиваем аудиофайл по file_path, полученному от Telegram."
+      "position": [
+        1100,
+        160
+      ],
+      "notes": "Скачиваем аудиофайл по file_path, полученному от Telegram.",
+      "settings": {
+        "onError": "continueErrorOutput"
+      }
     },
     {
       "parameters": {
@@ -138,14 +161,20 @@
       "name": "OpenAI Whisper: Транскрибация",
       "type": "@n8n/n8n-nodes-langchain.openAi",
       "typeVersion": 1.8,
-      "position": [1320, 160],
+      "position": [
+        1320,
+        160
+      ],
       "credentials": {
         "openAiApi": {
           "id": "OPENAI_CREDENTIALS_ID",
           "name": "OpenAI"
         }
       },
-      "notes": "Транскрибируем аудио через OpenAI Whisper API на русском языке."
+      "notes": "Транскрибируем аудио через OpenAI Whisper API на русском языке.",
+      "settings": {
+        "onError": "continueErrorOutput"
+      }
     },
     {
       "parameters": {
@@ -171,14 +200,20 @@
       "name": "GPT-4o: Оценка звонка",
       "type": "@n8n/n8n-nodes-langchain.openAi",
       "typeVersion": 1.8,
-      "position": [1540, 160],
+      "position": [
+        1540,
+        160
+      ],
       "credentials": {
         "openAiApi": {
           "id": "OPENAI_CREDENTIALS_ID",
           "name": "OpenAI"
         }
       },
-      "notes": "Анализируем транскрипцию звонка через GPT-4o. Ответ содержит два раздела: отчёт для Telegram и JSON для Google Sheets."
+      "notes": "Анализируем транскрипцию звонка через GPT-4o. Ответ содержит два раздела: отчёт для Telegram и JSON для Google Sheets.",
+      "settings": {
+        "onError": "continueErrorOutput"
+      }
     },
     {
       "parameters": {
@@ -188,8 +223,14 @@
       "name": "Разбор ответа GPT",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1760, 160],
-      "notes": "Разделяет ответ GPT на отчёт для Telegram и структурированные данные для Google Sheets."
+      "position": [
+        1760,
+        160
+      ],
+      "notes": "Разделяет ответ GPT на отчёт для Telegram и структурированные данные для Google Sheets.",
+      "settings": {
+        "onError": "continueErrorOutput"
+      }
     },
     {
       "parameters": {
@@ -203,7 +244,10 @@
       "name": "Отправить результат в Telegram",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [1980, 60],
+      "position": [
+        1980,
+        60
+      ],
       "credentials": {
         "telegramApi": {
           "id": "TELEGRAM_CREDENTIALS_ID",
@@ -250,14 +294,20 @@
       "name": "Сохранить в Google Sheets",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
-      "position": [1980, 280],
+      "position": [
+        1980,
+        280
+      ],
       "credentials": {
         "googleSheetsOAuth2Api": {
           "id": "GOOGLE_SHEETS_CREDENTIALS_ID",
           "name": "Google Sheets"
         }
       },
-      "notes": "Добавляет строку с оценками в Google Sheets таблицу. Столбцы соответствуют колонкам из таблицы контроля качества."
+      "notes": "Добавляет строку с оценками в Google Sheets таблицу. Столбцы соответствуют колонкам из таблицы контроля качества.",
+      "settings": {
+        "onError": "continueErrorOutput"
+      }
     },
     {
       "parameters": {
@@ -269,7 +319,10 @@
       "name": "Ошибка обработки",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [1540, 400],
+      "position": [
+        1320,
+        420
+      ],
       "credentials": {
         "telegramApi": {
           "id": "TELEGRAM_CREDENTIALS_ID",
@@ -339,6 +392,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Ошибка обработки",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -350,6 +410,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Ошибка обработки",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -358,6 +425,13 @@
         [
           {
             "node": "Разбор ответа GPT",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ошибка обработки",
             "type": "main",
             "index": 0
           }
@@ -374,6 +448,25 @@
           },
           {
             "node": "Сохранить в Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ошибка обработки",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Сохранить в Google Sheets": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Ошибка обработки",
             "type": "main",
             "index": 0
           }
