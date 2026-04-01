@@ -1,0 +1,496 @@
+{
+  "name": "Транскрибация и оценка звонков (Telegram + Google Sheets)",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "telegram-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIALS_ID",
+          "name": "Telegram Bot"
+        }
+      },
+      "notes": "Получает входящие сообщения из Telegram. Бот ожидает аудио/голосовые сообщения."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-audio",
+              "leftValue": "={{ $json.message.voice || $json.message.audio || $json.message.document }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-audio",
+      "name": "Проверка наличия аудио",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "notes": "Проверяет, содержит ли сообщение аудиофайл (voice, audio или document)."
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "⚠️ Пожалуйста, отправьте аудиофайл или голосовое сообщение с записью звонка для анализа.",
+        "additionalFields": {}
+      },
+      "id": "no-audio-reply",
+      "name": "Ответ: нет аудио",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        460
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIALS_ID",
+          "name": "Telegram Bot"
+        }
+      },
+      "notes": "Если сообщение не содержит аудио — просим пользователя прислать файл."
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "⏳ Получен аудиофайл. Начинаю транскрибацию и анализ звонка...",
+        "additionalFields": {}
+      },
+      "id": "processing-notification",
+      "name": "Уведомление о начале обработки",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        160
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIALS_ID",
+          "name": "Telegram Bot"
+        }
+      },
+      "notes": "Уведомляем пользователя о начале обработки."
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "get",
+        "fileId": "={{ $('Telegram Trigger').item.json.message.voice ? $('Telegram Trigger').item.json.message.voice.file_id : ($('Telegram Trigger').item.json.message.audio ? $('Telegram Trigger').item.json.message.audio.file_id : $('Telegram Trigger').item.json.message.document.file_id) }}"
+      },
+      "id": "get-file-info",
+      "name": "Получить информацию о файле",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        160
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIALS_ID",
+          "name": "Telegram Bot"
+        }
+      },
+      "notes": "Получаем file_path через Telegram Bot API getFile."
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/file/bot{{ $credentials.telegramApi.accessToken }}/{{ $json.result.file_path }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "download-audio",
+      "name": "Скачать аудиофайл",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        160
+      ],
+      "notes": "Скачиваем аудиофайл по file_path, полученному от Telegram.",
+      "settings": {
+        "onError": "continueErrorOutput"
+      }
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "options": {
+          "language": "ru",
+          "temperature": 0
+        }
+      },
+      "id": "whisper-transcribe",
+      "name": "OpenAI Whisper: Транскрибация",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        1320,
+        160
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CREDENTIALS_ID",
+          "name": "OpenAI"
+        }
+      },
+      "notes": "Транскрибируем аудио через OpenAI Whisper API на русском языке.",
+      "settings": {
+        "onError": "continueErrorOutput"
+      }
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Ты — эксперт по контролю качества телефонных звонков менеджеров по продажам. Тебе будет предоставлена транскрипция звонка. Твоя задача — проанализировать диалог и оценить его по следующим критериям:\n\n1. **Выявление потребностей** (0–2 балла)\n   - 0 баллов: менеджер не задавал вопросов о потребностях клиента\n   - 1 балл: менеджер задал 1-2 поверхностных вопроса\n   - 2 балла: менеджер глубоко выяснил потребности, задал уточняющие вопросы\n\n2. **Презентация** (0–3 балла)\n   - 0 баллов: презентация отсутствует или не соответствует потребностям\n   - 1 балл: базовая презентация без акцента на выгоды клиента\n   - 2 балла: хорошая презентация с учётом потребностей клиента\n   - 3 балла: отличная презентация с выгодами, примерами, адаптирована под клиента\n\n3. **Работа с возражениями** (0–2 балла)\n   - 0 баллов: менеджер не обработал возражения или проигнорировал их\n   - 1 балл: попытка обработать возражение, но неубедительно\n   - 2 балла: грамотная обработка возражений с аргументацией\n\n4. **Корректность передачи** (0–2 балла)\n   - 0 баллов: информация передана некорректно или с ошибками\n   - 1 балл: информация в целом верна, но есть неточности\n   - 2 балла: вся информация передана корректно и точно\n\n5. **Корректная работа с лотами** (0–1 балл)\n   - 0 баллов: менеджер неправильно работал с лотами или не упоминал их\n   - 1 балл: менеджер корректно работал с лотами\n\n6. **Обязательные вопросы** (да/нет по каждому)\n   Отметь, задал ли менеджер обязательные вопросы:\n   - Представился ли менеджер?\n   - Уточнил ли цель звонка/обращения?\n   - Предложил ли следующий шаг?\n   - Попрощался ли корректно?\n\n7. **Сервис клиенту** (0–10 баллов)\n   Общая оценка качества обслуживания: вежливость, эмпатия, готовность помочь, темп речи, отсутствие перебиваний.\n\nПосле оценки по всем критериям рассчитай **Средний балл проверки** (0–10 баллов) по формуле:\nСредний балл = ((Выявление потребностей / 2) + (Презентация / 3) + (Работа с возражениями / 2) + (Корректность передачи / 2) + (Корректная работа с лотами / 1) + (Сервис клиенту / 10)) / 6 × 10\n\nТвой ответ ОБЯЗАТЕЛЬНО должен содержать два раздела:\n\n---РАЗДЕЛ 1: ОТЧЁТ ДЛЯ TELEGRAM---\n\n📊 **ОЦЕНКА ЗВОНКА**\n━━━━━━━━━━━━━━━━━━━━\n\n📋 **Транскрипция:**\n[Краткое содержание звонка в 2-3 предложениях]\n\n📈 **Оценки по критериям:**\n\n1️⃣ Выявление потребностей: X/2\n   💬 [Комментарий]\n\n2️⃣ Презентация: X/3\n   💬 [Комментарий]\n\n3️⃣ Работа с возражениями: X/2\n   💬 [Комментарий]\n\n4️⃣ Корректность передачи: X/2\n   💬 [Комментарий]\n\n5️⃣ Корректная работа с лотами: X/1\n   💬 [Комментарий]\n\n6️⃣ Обязательные вопросы:\n   ✅/❌ Представление\n   ✅/❌ Цель звонка\n   ✅/❌ Следующий шаг\n   ✅/❌ Прощание\n\n7️⃣ Сервис клиенту: X/10\n   💬 [Комментарий]\n\n━━━━━━━━━━━━━━━━━━━━\n⭐ **Средний балл проверки: X.X/10**\n\n💡 **Рекомендации:**\n[2-3 конкретные рекомендации по улучшению]\n\n---РАЗДЕЛ 2: JSON ДЛЯ ТАБЛИЦЫ---\n{\"manager\": \"[Имя менеджера из диалога или 'Не определён']\", \"lot_type\": \"[Тип лота из диалога или 'Не определён']\", \"task\": \"[Краткое описание задачи звонка]\", \"needs_score\": X, \"presentation_score\": X, \"objections_score\": X, \"transfer_score\": X, \"lots_score\": X, \"mandatory_questions\": \"[Представление: да/нет, Цель: да/нет, Следующий шаг: да/нет, Прощание: да/нет]\", \"service_score\": X, \"average_score\": X.X}"
+            },
+            {
+              "role": "user",
+              "content": "=Вот транскрипция звонка для анализа:\n\n{{ $('OpenAI Whisper: Транскрибация').item.json.text }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 3000
+        }
+      },
+      "id": "gpt-evaluate",
+      "name": "GPT-4o: Оценка звонка",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        1540,
+        160
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CREDENTIALS_ID",
+          "name": "OpenAI"
+        }
+      },
+      "notes": "Анализируем транскрипцию звонка через GPT-4o. Ответ содержит два раздела: отчёт для Telegram и JSON для Google Sheets.",
+      "settings": {
+        "onError": "continueErrorOutput"
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Получаем полный ответ GPT\nconst gptResponse = $('GPT-4o: Оценка звонка').item.json.message.content;\n\n// Разделяем ответ на отчёт для Telegram и JSON для таблицы\nlet telegramReport = '';\nlet jsonData = {};\n\n// Извлекаем отчёт для Telegram\nconst telegramMatch = gptResponse.match(/---РАЗДЕЛ 1: ОТЧЁТ ДЛЯ TELEGRAM---\\n([\\s\\S]*?)\\n---РАЗДЕЛ 2: JSON ДЛЯ ТАБЛИЦЫ---/);\nif (telegramMatch) {\n  telegramReport = telegramMatch[1].trim();\n} else {\n  // Fallback: весь ответ идёт как отчёт\n  telegramReport = gptResponse;\n}\n\n// Извлекаем JSON для таблицы\nconst jsonMatch = gptResponse.match(/---РАЗДЕЛ 2: JSON ДЛЯ ТАБЛИЦЫ---\\n([\\s\\S]*?)$/);\nif (jsonMatch) {\n  try {\n    const rawJson = jsonMatch[1].trim();\n    // Ищем JSON-объект в тексте\n    const jsonStr = rawJson.match(/\\{[\\s\\S]*\\}/)[0];\n    jsonData = JSON.parse(jsonStr);\n  } catch (e) {\n    jsonData = {\n      manager: 'Ошибка парсинга',\n      lot_type: '',\n      task: 'Ошибка разбора JSON: ' + e.message,\n      needs_score: 0,\n      presentation_score: 0,\n      objections_score: 0,\n      transfer_score: 0,\n      lots_score: 0,\n      mandatory_questions: '',\n      service_score: 0,\n      average_score: 0\n    };\n  }\n}\n\n// Формируем дату и время\nconst now = new Date();\nconst date = now.toLocaleDateString('ru-RU');\nconst time = now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });\n\n// Номер — chat ID отправителя\nconst chatId = $('Telegram Trigger').item.json.message.chat.id;\nconst senderName = $('Telegram Trigger').item.json.message.from.first_name || '';\nconst senderLast = $('Telegram Trigger').item.json.message.from.last_name || '';\nconst sender = (senderName + ' ' + senderLast).trim();\n\nreturn {\n  json: {\n    telegramReport: telegramReport,\n    date: date,\n    manager: jsonData.manager || 'Не определён',\n    number: String(chatId),\n    time: time,\n    lot_type: jsonData.lot_type || 'Не определён',\n    task: jsonData.task || '',\n    needs_score: jsonData.needs_score || 0,\n    presentation_score: jsonData.presentation_score || 0,\n    objections_score: jsonData.objections_score || 0,\n    transfer_score: jsonData.transfer_score || 0,\n    lots_score: jsonData.lots_score || 0,\n    mandatory_questions: jsonData.mandatory_questions || '',\n    service_score: jsonData.service_score || 0,\n    average_score: jsonData.average_score || 0,\n    sender: sender\n  }\n};"
+      },
+      "id": "parse-response",
+      "name": "Разбор ответа GPT",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        160
+      ],
+      "notes": "Разделяет ответ GPT на отчёт для Telegram и структурированные данные для Google Sheets.",
+      "settings": {
+        "onError": "continueErrorOutput"
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ $json.telegramReport }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-result",
+      "name": "Отправить результат в Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1980,
+        60
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIALS_ID",
+          "name": "Telegram Bot"
+        }
+      },
+      "notes": "Отправляем отчёт оценки обратно в Telegram чат."
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "GOOGLE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Лист1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Дата": "={{ $json.date }}",
+            "Менеджер": "={{ $json.manager }}",
+            "Номер": "={{ $json.number }}",
+            "Время": "={{ $json.time }}",
+            "Тип лота": "={{ $json.lot_type }}",
+            "Задача": "={{ $json.task }}",
+            "Выявление потребностей 0 - 2 балла": "={{ $json.needs_score }}",
+            "Презентация 0 - 3 балла": "={{ $json.presentation_score }}",
+            "Работа с возражениями 0 - 2 балла": "={{ $json.objections_score }}",
+            "Корректность передачи 0 - 2 балла": "={{ $json.transfer_score }}",
+            "Корректная работа с лотами 0 - 1 балл": "={{ $json.lots_score }}",
+            "Обязательные вопросы": "={{ $json.mandatory_questions }}",
+            "Сервис клиенту 0-10 баллов": "={{ $json.service_score }}",
+            "Средний балл проверки 0-10 баллов": "={{ $json.average_score }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "google-sheets-append",
+      "name": "Сохранить в Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1980,
+        280
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CREDENTIALS_ID",
+          "name": "Google Sheets"
+        }
+      },
+      "notes": "Добавляет строку с оценками в Google Sheets таблицу. Столбцы соответствуют колонкам из таблицы контроля качества.",
+      "settings": {
+        "onError": "continueErrorOutput"
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "❌ Произошла ошибка при обработке аудиофайла. Пожалуйста, попробуйте ещё раз или отправьте файл в другом формате (mp3, ogg, wav, m4a).",
+        "additionalFields": {}
+      },
+      "id": "error-handler",
+      "name": "Ошибка обработки",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        420
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIALS_ID",
+          "name": "Telegram Bot"
+        }
+      },
+      "notes": "Уведомляем пользователя об ошибке."
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Проверка наличия аудио",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Проверка наличия аудио": {
+      "main": [
+        [
+          {
+            "node": "Уведомление о начале обработки",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ответ: нет аудио",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Уведомление о начале обработки": {
+      "main": [
+        [
+          {
+            "node": "Получить информацию о файле",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Получить информацию о файле": {
+      "main": [
+        [
+          {
+            "node": "Скачать аудиофайл",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Скачать аудиофайл": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Whisper: Транскрибация",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ошибка обработки",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Whisper: Транскрибация": {
+      "main": [
+        [
+          {
+            "node": "GPT-4o: Оценка звонка",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ошибка обработки",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-4o: Оценка звонка": {
+      "main": [
+        [
+          {
+            "node": "Разбор ответа GPT",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ошибка обработки",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Разбор ответа GPT": {
+      "main": [
+        [
+          {
+            "node": "Отправить результат в Telegram",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Сохранить в Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ошибка обработки",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Сохранить в Google Sheets": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Ошибка обработки",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "Телефония",
+      "id": "1"
+    },
+    {
+      "name": "Контроль качества",
+      "id": "2"
+    }
+  ],
+  "pinData": {},
+  "versionId": "2"
+}
