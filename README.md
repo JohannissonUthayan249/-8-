@@ -86,6 +86,18 @@ Code Router — центральный узел. Он определяет ти�
 
 ---
 
+## Как импортировать в n8n
+
+1. Скопируйте содержимое файла `n8n_workflow.json`
+2. В n8n откройте **Workflows** → **Add Workflow** → **Import from JSON**
+3. Вставьте скопированный JSON и нажмите **Import**
+4. Настройте credentials:
+   - **Telegram API** — токен бота от @BotFather
+   - **OpenAI API** — API ключ от OpenAI (Header Auth с `Authorization: Bearer sk-...`)
+5. Активируйте воркфлоу
+
+---
+
 ## Проверка после импорта
 
 | Действие | Ожидаемый результат |
