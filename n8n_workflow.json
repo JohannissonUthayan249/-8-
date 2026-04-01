@@ -102,7 +102,7 @@
     },
     {
       "parameters": {
-        "url": "=https://api.telegram.org/bot{{ $credentials.telegramApi.token }}/{{ $json.telegramMethod }}",
+        "url": "=https://api.telegram.org/bot{{ $credentials.telegramApi.accessToken }}/{{ $json.telegramMethod }}",
         "method": "POST",
         "sendBody": true,
         "specifyBody": "json",
@@ -162,7 +162,7 @@
     },
     {
       "parameters": {
-        "url": "=https://api.telegram.org/bot{{ $credentials.telegramApi.token }}/sendMessage",
+        "url": "=https://api.telegram.org/bot{{ $credentials.telegramApi.accessToken }}/sendMessage",
         "method": "POST",
         "sendBody": true,
         "bodyParameters": {

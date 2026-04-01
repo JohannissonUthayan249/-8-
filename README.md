@@ -109,6 +109,49 @@ Code Router — центральный узел. Он определяет ти�
 
 ---
 
+## Структура URL для Telegram API (httpRequest)
+
+В этом воркфлоу узлы **Telegram Send** и **Telegram AI Reply** используют `httpRequest` для вызова Telegram Bot API. Ниже — правильная структура URL.
+
+### ✅ Правильная структура (через n8n credentials)
+
+```
+=https://api.telegram.org/bot{{ $credentials.telegramApi.accessToken }}/{{ $json.telegramMethod }}
+```
+
+| Часть | Описание |
+|-------|----------|
+| `=` | Префикс n8n — указывает, что строка содержит выражение |
+| `https://api.telegram.org/bot` | Базовый URL Telegram Bot API |
+| `{{ $credentials.telegramApi.accessToken }}` | Токен бота из n8n credentials (безопасно, не хранится в JSON) |
+| `/` | Разделитель |
+| `{{ $json.telegramMethod }}` | Метод API из данных Code Router (`sendMessage`, `sendPhoto` и т.д.) |
+
+### ❌ НЕ делайте так (токен в коде)
+
+```
+https://api.telegram.org/bot123456789:AAxxxx.../sendMessage
+```
+
+Никогда не вставляйте токен напрямую в URL — используйте n8n credentials.
+
+### Как настроить Telegram credentials в n8n
+
+1. В n8n откройте **Credentials** → **Add Credential** → **Telegram API**
+2. Вставьте токен бота от @BotFather в поле **Access Token**
+3. Нажмите **Save**
+4. В узлах **Telegram Send** и **Telegram AI Reply** выберите созданный credential
+
+### Пример результирующего URL
+
+При `telegramMethod = 'sendMessage'` и токене `<ВАШ_ТОКЕН>`, n8n сформирует:
+
+```
+https://api.telegram.org/bot<ВАШ_ТОКЕН>/sendMessage
+```
+
+---
+
 ## Проверка после импорта
 
 | Действие | Ожидаемый результат |
