@@ -449,7 +449,7 @@
                     throw new Error('Ошибка сервера');
                 }
             } catch (err) {
-                errorMsg.classList.remove('show');
+                // Force reflow to restart CSS animations before showing the error
                 void errorMsg.offsetWidth;
                 errorMsg.classList.add('show');
                 submitBtn.disabled = false;
