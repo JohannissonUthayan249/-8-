@@ -195,7 +195,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const items = $input.all();\nconst data = items[0].json;\nconst categoryKey = data.categoryKey;\nconst chatId = data.chatId;\n\n// Placeholder: Airtable lookup would go here\nreturn [{ json: { chatId, categoryKey, airtableFormula: data.airtableFormula } }];"
+        "jsCode": "const items = $input.all();\nconst data = items[0].json;\nconst categoryKey = data.categoryKey;\nconst chatId = data.chatId;\nconst callbackQueryId = data.callbackQueryId;\n\nconst categoryNames = {\n  flowers: '🌸 Цветочные ароматы',\n  wood: '🌲 Древесные ароматы',\n  oriental: '🌙 Восточные ароматы',\n  citrus: '🍋 Цитрусовые ароматы',\n};\n\nconst categoryDescriptions = {\n  flowers: 'Розы, жасмин, ирис, пион, ландыш, тубероза — женственность и романтика.',\n  wood: 'Сандал, кедр, ветивер, уд, пачули — тёплые, глубокие, уверенные.',\n  oriental: 'Амбра, ваниль, мускус, специи, ладан — чувственность и загадка.',\n  citrus: 'Бергамот, лимон, грейпфрут, мандарин, юзу — свежесть и энергия.',\n};\n\nconst name = categoryNames[categoryKey] || categoryKey;\nconst desc = categoryDescriptions[categoryKey] || 'Описание скоро появится.';\n\nconst backKeyboard = {\n  inline_keyboard: [\n    [{ text: '⬅️ К категориям', callback_data: 'catalog' }],\n    [{ text: '🏠 Главное меню', callback_data: 'back' }],\n  ],\n};\n\nreturn [{\n  json: {\n    chatId,\n    callbackQueryId,\n    categoryKey,\n    text: `${name}\\n\\n${desc}\\n\\n💡 Скоро здесь появятся конкретные ароматы из каталога. А пока — можешь нажать «✨ Подобрать» в главном меню, и я помогу выбрать аромат лично для тебя.`,\n    reply_markup: backKeyboard,\n  },\n}];"
       },
       "id": "airtable-lookup",
       "name": "Airtable Lookup",
@@ -205,6 +205,52 @@
         720,
         740
       ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $credentials.telegramApi.accessToken }}/sendMessage",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $json.chatId, text: $json.text, reply_markup: $json.reply_markup }) }}"
+      },
+      "id": "category-reply",
+      "name": "Category Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        740
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-cred",
+          "name": "Telegram API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $credentials.telegramApi.accessToken }}/answerCallbackQuery",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ callback_query_id: $json.callbackQueryId }) }}"
+      },
+      "id": "answer-callback",
+      "name": "Answer Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        100
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-cred",
+          "name": "Telegram API"
+        }
+      }
     }
   ],
   "connections": {
@@ -271,6 +317,17 @@
         [
           {
             "node": "Telegram AI Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable Lookup": {
+      "main": [
+        [
+          {
+            "node": "Category Reply",
             "type": "main",
             "index": 0
           }

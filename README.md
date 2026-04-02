@@ -25,10 +25,10 @@ n8n воркфлоу для Telegram-бота — парфюмерного ги�
 Telegram Trigger → Code Router → Route Switch
                                    ├─ telegram → Telegram Send (sendMessage / sendPhoto)
                                    ├─ ai       → OpenAI Request → Build AI Reply → Telegram AI Reply
-                                   └─ airtable → Airtable Lookup (placeholder)
+                                   └─ airtable → Airtable Lookup → Category Reply (sendMessage)
 ```
 
-### Узлы (8 шт.)
+### Узлы (10 шт.)
 
 | # | Узел | Тип | Назначение |
 |---|------|-----|------------|
@@ -39,7 +39,9 @@ Telegram Trigger → Code Router → Route Switch
 | 5 | OpenAI Request | httpRequest | Запрос к GPT-4o |
 | 6 | Build AI Reply | code | Формирует ответ из OpenAI response |
 | 7 | Telegram AI Reply | httpRequest | Отправляет AI-ответ пользователю |
-| 8 | Airtable Lookup | code | Placeholder для поиска по Airtable |
+| 8 | Airtable Lookup | code | Формирует ответ по категории (placeholder для Airtable) |
+| 9 | Category Reply | httpRequest | Отправляет ответ по категории пользователю |
+| 10 | Answer Callback | httpRequest | answerCallbackQuery — убирает спиннер с кнопки |
 
 ---
 
@@ -161,5 +163,5 @@ https://api.telegram.org/bot<ВАШ_ТОКЕН>/sendMessage
 | Кнопка «✨ Подобрать» | AI начинает диалог о подборе аромата |
 | Кнопка «🎓 Инфо» | Справка о боте |
 | Кнопка «⬅️ Назад» | Возврат в главное меню с фото |
-| Категория (🌸/🌲/🌙/🍋) | Поиск в Airtable (нужна настройка) |
+| Категория (🌸/🌲/🌙/🍋) | Описание категории + кнопки навигации (к категориям / главное меню) |
 | Произвольный текст | AI-ответ от GPT-4o |
