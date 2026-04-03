@@ -73,27 +73,6 @@
               },
               "renameOutput": true,
               "outputKey": "select"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": false,
-                  "leftValue": ""
-                },
-                "conditions": [
-                  {
-                    "id": "cond-category",
-                    "leftValue": "={{ $json.action }}",
-                    "rightValue": "category:",
-                    "operator": {
-                      "type": "string",
-                      "operation": "startsWith"
-                    }
-                  }
-                ]
-              },
-              "renameOutput": true,
-              "outputKey": "category"
             }
           ]
         },
@@ -105,7 +84,7 @@
       "typeVersion": 3,
       "position": [620, 340],
       "id": "switch-1",
-      "name": "Route Switch"
+      "name": "Switch"
     },
     {
       "parameters": {
@@ -223,7 +202,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const chatId = $('Route Switch').first().json.chatId;\nconst aiReply = $json.choices?.[0]?.message?.content || 'Извините, не удалось получить ответ.';\n\nreturn [{ json: { chatId, text: aiReply } }];"
+        "jsCode": "const chatId = $('Switch').first().json.chatId;\nconst aiReply = $json.choices?.[0]?.message?.content || 'Извините, не удалось получить ответ.';\n\nreturn [{ json: { chatId, text: aiReply } }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -252,76 +231,6 @@
           "name": "Telegram API"
         }
       }
-    },
-    {
-      "parameters": {
-        "jsCode": "// Prepare Airtable category lookup\nconst chatId = $json.chatId;\nconst action = $json.action;\nconst category = action.replace('category:', '').trim();\n\nreturn [{ json: { chatId, category } }];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [900, 340],
-      "id": "cat-code-1",
-      "name": "Category Code"
-    },
-    {
-      "parameters": {
-        "method": "GET",
-        "url": "=https://api.airtable.com/v0/YOUR_BASE_ID/YOUR_TABLE_NAME?filterByFormula={Category}=\"{{ $json.category }}\"",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "airtableTokenApi",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $credentials.airtableTokenApi.accessToken }}"
-            }
-          ]
-        }
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [1100, 340],
-      "id": "cat-http-1",
-      "name": "Airtable Lookup",
-      "credentials": {
-        "airtableTokenApi": {
-          "id": "airtable-cred",
-          "name": "Airtable Token"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "// Format category results with fragrance images\nconst chatId = $('Category Code').first().json.chatId;\nconst category = $('Category Code').first().json.category;\nconst records = $json.records || [];\n\nlet text = `📂 <b>${category}</b>\\n\\n`;\nfor (const rec of records) {\n  const name = rec.fields?.Name || '';\n  const desc = rec.fields?.Description || '';\n  text += `• <b>${name}</b> — ${desc}\\n`;\n}\n\nif (records.length === 0) {\n  text += 'Ароматы не найдены.';\n}\n\nreturn [{ json: { chatId, text } }];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1300, 340],
-      "id": "cat-format-1",
-      "name": "Category Format"
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "=https://api.telegram.org/bot{{ $credentials.telegramApi.accessToken }}/sendMessage",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "telegramApi",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"chat_id\": {{ $json.chatId }},\n  \"text\": {{ JSON.stringify($json.text) }},\n  \"parse_mode\": \"HTML\"\n}"
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [1500, 340],
-      "id": "cat-reply-1",
-      "name": "Category Reply",
-      "credentials": {
-        "telegramApi": {
-          "id": "telegram-cred",
-          "name": "Telegram API"
-        }
-      }
     }
   ],
   "connections": {
@@ -332,14 +241,13 @@
     },
     "Code Router": {
       "main": [
-        [{ "node": "Route Switch", "type": "main", "index": 0 }]
+        [{ "node": "Switch", "type": "main", "index": 0 }]
       ]
     },
-    "Route Switch": {
+    "Switch": {
       "main": [
         [{ "node": "Telegram API1", "type": "main", "index": 0 }],
         [{ "node": "Code in JavaScript", "type": "main", "index": 0 }],
-        [{ "node": "Category Code", "type": "main", "index": 0 }],
         [{ "node": "OpenAI Response", "type": "main", "index": 0 }]
       ]
     },
@@ -356,21 +264,6 @@
     "Code in JavaScript1": {
       "main": [
         [{ "node": "Telegram API", "type": "main", "index": 0 }]
-      ]
-    },
-    "Category Code": {
-      "main": [
-        [{ "node": "Airtable Lookup", "type": "main", "index": 0 }]
-      ]
-    },
-    "Airtable Lookup": {
-      "main": [
-        [{ "node": "Category Format", "type": "main", "index": 0 }]
-      ]
-    },
-    "Category Format": {
-      "main": [
-        [{ "node": "Category Reply", "type": "main", "index": 0 }]
       ]
     },
     "OpenAI Response": {
