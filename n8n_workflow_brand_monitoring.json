@@ -1,0 +1,309 @@
+{
+  "name": "Brand Monitoring — Telegram → OpenAI → Google Sheets",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message"],
+        "additionalFields": {
+          "download": false
+        }
+      },
+      "id": "node-tg-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [220, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      },
+      "notes": "Получает все новые сообщения из Telegram-группы. Бот должен быть добавлен в группу и иметь разрешение на чтение сообщений."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Фильтруем сообщения: оставляем только те, где упоминается «ChatGPT»\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const msg = item.json.message || {};\n  const text = msg.text || msg.caption || '';\n\n  // Проверяем наличие ключевого слова (регистронезависимо)\n  if (/chatgpt/i.test(text)) {\n    results.push({\n      json: {\n        messageId: msg.message_id,\n        chatId: msg.chat?.id,\n        chatTitle: msg.chat?.title || 'Private',\n        fromUser: msg.from?.username || msg.from?.first_name || 'Unknown',\n        text: text,\n        date: new Date(msg.date * 1000).toISOString()\n      }\n    });\n  }\n}\n\nreturn results;"
+      },
+      "id": "node-filter",
+      "name": "Filter Brand Mentions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "notes": "Фильтрует входящие сообщения — пропускает только те, в которых есть упоминание «ChatGPT» (без учёта регистра). Извлекает метаданные: автор, чат, дата, текст."
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "operation": "complete",
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Ты — аналитик тональности и суммаризации. Тебе поступает сообщение из Telegram-группы, в котором упоминается бренд «ChatGPT».\n\nТвоя задача:\n1. **Тональность (sentiment)** — определи одну из категорий: positive, negative, neutral.\n2. **Уверенность (confidence)** — от 0.0 до 1.0, насколько ты уверен в оценке.\n3. **Краткое резюме (summary)** — 1–2 предложения, суть сообщения.\n4. **Ключевые темы (topics)** — массив тегов (например: [\"обновление\", \"производительность\", \"баг\"]).\n\nОтвечай строго в формате JSON:\n{\n  \"sentiment\": \"positive | negative | neutral\",\n  \"confidence\": 0.0–1.0,\n  \"summary\": \"...\",\n  \"topics\": [\"...\", \"...\"]\n}"
+            },
+            {
+              "role": "user",
+              "content": "={{ $json.text }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.2,
+          "maxTokens": 500
+        }
+      },
+      "id": "node-openai",
+      "name": "OpenAI Sentiment Analysis",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.2,
+      "position": [700, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI API"
+        }
+      },
+      "notes": "Отправляет текст сообщения в GPT-4o-mini для анализа тональности и суммаризации. Возвращает JSON с полями: sentiment, confidence, summary, topics."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Парсим JSON-ответ от OpenAI и объединяем с исходными данными\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const original = $('Filter Brand Mentions').first().json;\n  const aiResponse = item.json.message?.content || item.json.choices?.[0]?.message?.content || '{}';\n\n  let parsed;\n  try {\n    // Извлекаем JSON из ответа (на случай, если модель добавила markdown-блок)\n    const jsonMatch = aiResponse.match(/\\{[\\s\\S]*\\}/);\n    parsed = JSON.parse(jsonMatch ? jsonMatch[0] : aiResponse);\n  } catch (e) {\n    parsed = {\n      sentiment: 'unknown',\n      confidence: 0,\n      summary: aiResponse,\n      topics: []\n    };\n  }\n\n  results.push({\n    json: {\n      date: original.date,\n      chatTitle: original.chatTitle,\n      fromUser: original.fromUser,\n      originalText: original.text,\n      sentiment: parsed.sentiment || 'unknown',\n      confidence: parsed.confidence || 0,\n      summary: parsed.summary || '',\n      topics: Array.isArray(parsed.topics) ? parsed.topics.join(', ') : String(parsed.topics || ''),\n      messageId: original.messageId,\n      chatId: original.chatId\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "node-parse",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [940, 300],
+      "notes": "Парсит JSON-ответ от OpenAI и объединяет его с исходными метаданными сообщения. Формирует финальную структуру для записи в Google Sheets."
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "date": "={{ $json.date }}",
+            "chat": "={{ $json.chatTitle }}",
+            "user": "={{ $json.fromUser }}",
+            "message": "={{ $json.originalText }}",
+            "sentiment": "={{ $json.sentiment }}",
+            "confidence": "={{ $json.confidence }}",
+            "summary": "={{ $json.summary }}",
+            "topics": "={{ $json.topics }}",
+            "message_id": "={{ $json.messageId }}",
+            "chat_id": "={{ $json.chatId }}"
+          },
+          "matchingColumns": []
+        },
+        "options": {}
+      },
+      "id": "node-sheets",
+      "name": "Google Sheets — Save",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1180, 200],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets"
+        }
+      },
+      "notes": "Сохраняет результат анализа в Google Sheets. Колонки: date, chat, user, message, sentiment, confidence, summary, topics, message_id, chat_id."
+    },
+    {
+      "parameters": {
+        "resource": "page",
+        "databaseId": {
+          "__rl": true,
+          "value": "NOTION_DATABASE_ID",
+          "mode": "id"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Date",
+              "dateValue": "={{ $json.date }}",
+              "propertyType": "date"
+            },
+            {
+              "key": "Chat",
+              "title": "={{ $json.chatTitle }}",
+              "propertyType": "richText"
+            },
+            {
+              "key": "User",
+              "title": "={{ $json.fromUser }}",
+              "propertyType": "richText"
+            },
+            {
+              "key": "Message",
+              "title": "={{ $json.originalText }}",
+              "propertyType": "title"
+            },
+            {
+              "key": "Sentiment",
+              "option": "={{ $json.sentiment }}",
+              "propertyType": "select"
+            },
+            {
+              "key": "Confidence",
+              "numberValue": "={{ $json.confidence }}",
+              "propertyType": "number"
+            },
+            {
+              "key": "Summary",
+              "title": "={{ $json.summary }}",
+              "propertyType": "richText"
+            },
+            {
+              "key": "Topics",
+              "title": "={{ $json.topics }}",
+              "propertyType": "richText"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-notion",
+      "name": "Notion — Save",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [1180, 440],
+      "credentials": {
+        "notionApi": {
+          "id": "NOTION_CREDENTIAL_ID",
+          "name": "Notion API"
+        }
+      },
+      "notes": "Сохраняет результат анализа в Notion-базу данных. Поля: Date, Chat, User, Message (title), Sentiment (select), Confidence (number), Summary, Topics."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "status",
+              "name": "status",
+              "value": "saved",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-done",
+      "name": "Done",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1420, 300],
+      "notes": "Финальный узел. Подтверждает успешное сохранение. Может быть расширен для отправки уведомлений или логирования."
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Filter Brand Mentions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Brand Mentions": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Sentiment Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Sentiment Analysis": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets — Save",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notion — Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets — Save": {
+      "main": [
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion — Save": {
+      "main": [
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "active": false,
+  "pinData": {},
+  "tags": [
+    {
+      "name": "portfolio"
+    },
+    {
+      "name": "brand-monitoring"
+    },
+    {
+      "name": "sentiment-analysis"
+    }
+  ]
+}
