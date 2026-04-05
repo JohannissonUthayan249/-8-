@@ -1,0 +1,353 @@
+{
+  "name": "Мониторинг тикетов на негатив",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-zendesk",
+      "name": "Zendesk Trigger",
+      "type": "n8n-nodes-base.zendeskTrigger",
+      "typeVersion": 1,
+      "position": [220, 300],
+      "webhookId": "zendesk-ticket-trigger",
+      "notes": "Срабатывает при новом/обновлённом тикете или комментарии в Zendesk"
+    },
+    {
+      "parameters": {},
+      "id": "trigger-intercom",
+      "name": "Intercom Trigger",
+      "type": "n8n-nodes-base.intercomTrigger",
+      "typeVersion": 1,
+      "position": [220, 540],
+      "webhookId": "intercom-conversation-trigger",
+      "notes": "Срабатывает при новом сообщении в Intercom"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Нормализуем входные данные из Zendesk или Intercom в единый формат\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const data = item.json;\n  let message = '';\n  let ticketId = '';\n  let source = '';\n  let customerName = '';\n  let customerEmail = '';\n\n  // Zendesk формат\n  if (data.ticket || data.comment) {\n    message = (data.comment && data.comment.body) || (data.ticket && data.ticket.description) || '';\n    ticketId = (data.ticket && data.ticket.id) || '';\n    source = 'zendesk';\n    customerName = (data.ticket && data.ticket.requester && data.ticket.requester.name) || '';\n    customerEmail = (data.ticket && data.ticket.requester && data.ticket.requester.email) || '';\n  }\n  // Intercom формат\n  else if (data.data && data.data.item) {\n    const conv = data.data.item;\n    const parts = conv.conversation_parts && conv.conversation_parts.conversation_parts;\n    message = (parts && parts.length > 0 && parts[parts.length - 1].body) || (conv.source && conv.source.body) || '';\n    ticketId = conv.id || '';\n    source = 'intercom';\n    customerName = (conv.source && conv.source.author && conv.source.author.name) || '';\n    customerEmail = (conv.source && conv.source.author && conv.source.author.email) || '';\n  }\n\n  // Убираем HTML-теги\n  message = message.replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim();\n\n  results.push({\n    json: {\n      message,\n      ticketId: String(ticketId),\n      source,\n      customerName,\n      customerEmail\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "normalize",
+      "name": "Normalize Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 420],
+      "notes": "Приводим данные Zendesk/Intercom к единому формату: message, ticketId, source, customerName, customerEmail"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Проверяем сообщение на слова-триггеры\nconst items = $input.all();\nconst results = [];\n\nconst triggerWords = [\n  'отмена',\n  'возврат',\n  'ужасно',\n  'юрист',\n  'мошенники',\n  'судиться'\n];\n\n// Строим регулярное выражение из слов-триггеров\nconst pattern = new RegExp('(' + triggerWords.join('|') + ')', 'gi');\n\nfor (const item of items) {\n  const msg = (item.json.message || '').toLowerCase();\n  const matches = msg.match(pattern);\n\n  if (matches && matches.length > 0) {\n    // Убираем дубликаты\n    const uniqueMatches = [...new Set(matches.map(m => m.toLowerCase()))];\n    results.push({\n      json: {\n        ...item.json,\n        isNegative: true,\n        triggeredWords: uniqueMatches,\n        triggeredCount: uniqueMatches.length\n      }\n    });\n  } else {\n    results.push({\n      json: {\n        ...item.json,\n        isNegative: false,\n        triggeredWords: [],\n        triggeredCount: 0\n      }\n    });\n  }\n}\n\nreturn results;"
+      },
+      "id": "check-triggers",
+      "name": "Check Trigger Words",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 420],
+      "notes": "Проверяет сообщение на слова-триггеры: отмена, возврат, ужасно, юрист, мошенники, судиться"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-negative",
+              "leftValue": "={{ $json.isNegative }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-negative",
+      "name": "Is Negative?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [960, 420],
+      "notes": "Если isNegative == true → Эскалация (output 0). Иначе → Ничего (output 1)."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Формируем уведомление для менеджера\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const d = item.json;\n  const sourceLabel = d.source === 'zendesk' ? 'Zendesk' : 'Intercom';\n\n  const alertText = `🚨 *НЕГАТИВ ОБНАРУЖЕН*\\n\\n` +\n    `📌 *Источник:* ${sourceLabel}\\n` +\n    `🎫 *Тикет/Чат:* #${d.ticketId}\\n` +\n    `👤 *Клиент:* ${d.customerName || 'Неизвестно'}\\n` +\n    `📧 *Email:* ${d.customerEmail || '—'}\\n\\n` +\n    `⚠️ *Триггерные слова:* ${d.triggeredWords.join(', ')}\\n` +\n    `📝 *Сообщение:*\\n${d.message.substring(0, 500)}${d.message.length > 500 ? '...' : ''}\\n\\n` +\n    `⏰ *Время:* ${new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}`;\n\n  results.push({\n    json: {\n      ...d,\n      alertText\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "format-alert",
+      "name": "Format Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 300],
+      "notes": "Формирует текст уведомления для менеджера с деталями тикета и триггерными словами"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.MANAGER_TELEGRAM_CHAT_ID }}",
+        "text": "={{ $json.alertText }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "telegram-notify",
+      "name": "Notify Manager (Telegram)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1460, 200],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-cred",
+          "name": "Telegram Bot"
+        }
+      },
+      "notes": "Отправляет уведомление менеджеру в Telegram. Chat ID берётся из переменной окружения MANAGER_TELEGRAM_CHAT_ID"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.source === 'zendesk' ? 'https://' + $env.ZENDESK_SUBDOMAIN + '.zendesk.com/api/v2/tickets/' + $json.ticketId + '.json' : '' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ticket",
+              "value": "={ \"priority\": \"urgent\", \"tags\": [\"negative_escalation\", \"auto_flagged\"] }"
+            }
+          ]
+        },
+        "options": {
+          "allowUnauthorizedCerts": false
+        },
+        "method": "PUT"
+      },
+      "id": "zendesk-escalate",
+      "name": "Zendesk — Escalate Priority",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1460, 400],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "zendesk-basic-auth",
+          "name": "Zendesk API Auth"
+        }
+      },
+      "notes": "Повышает приоритет тикета Zendesk до Urgent и добавляет тег negative_escalation",
+      "executeOnce": false,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.source === 'intercom' ? 'https://api.intercom.io/conversations/' + $json.ticketId + '/tags' : '' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "={{ $env.INTERCOM_ESCALATION_TAG_ID }}"
+            }
+          ]
+        },
+        "options": {},
+        "method": "POST"
+      },
+      "id": "intercom-escalate",
+      "name": "Intercom — Tag & Escalate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1460, 580],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "intercom-auth",
+          "name": "Intercom API Auth"
+        }
+      },
+      "notes": "Добавляет тег эскалации в Intercom-разговор для повышения приоритета",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "timestamp",
+              "value": "={{ new Date().toISOString() }}"
+            },
+            {
+              "name": "ticketId",
+              "value": "={{ $json.ticketId }}"
+            },
+            {
+              "name": "source",
+              "value": "={{ $json.source }}"
+            },
+            {
+              "name": "customerName",
+              "value": "={{ $json.customerName }}"
+            },
+            {
+              "name": "triggeredWords",
+              "value": "={{ $json.triggeredWords.join(', ') }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.message.substring(0, 500) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "log-to-sheets",
+      "name": "Log to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1700, 400],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-cred",
+          "name": "Google Sheets"
+        }
+      },
+      "notes": "Логирует инцидент в Google Sheets: время, тикет, источник, клиент, слова-триггеры, сообщение"
+    },
+    {
+      "parameters": {},
+      "id": "no-action",
+      "name": "No Action",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1200, 560],
+      "notes": "Негатив не обнаружен — пропускаем"
+    }
+  ],
+  "connections": {
+    "Zendesk Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intercom Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Message": {
+      "main": [
+        [
+          {
+            "node": "Check Trigger Words",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Trigger Words": {
+      "main": [
+        [
+          {
+            "node": "Is Negative?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Negative?": {
+      "main": [
+        [
+          {
+            "node": "Format Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Alert": {
+      "main": [
+        [
+          {
+            "node": "Notify Manager (Telegram)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Zendesk — Escalate Priority",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Intercom — Tag & Escalate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zendesk — Escalate Priority": {
+      "main": [
+        [
+          {
+            "node": "Log to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intercom — Tag & Escalate": {
+      "main": [
+        [
+          {
+            "node": "Log to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "active": false,
+  "pinData": {},
+  "tags": [
+    {
+      "name": "monitoring"
+    },
+    {
+      "name": "support"
+    },
+    {
+      "name": "negativity"
+    }
+  ]
+}
