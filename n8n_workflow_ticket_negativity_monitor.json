@@ -112,14 +112,8 @@
         "authentication": "genericCredentialType",
         "genericAuthType": "httpBasicAuth",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "ticket",
-              "value": "={ \"priority\": \"urgent\", \"tags\": [\"negative_escalation\", \"auto_flagged\"] }"
-            }
-          ]
-        },
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ticket: { priority: 'urgent', tags: ($json.existingTags || []).concat(['negative_escalation', 'auto_flagged']) } }) }}",
         "options": {
           "allowUnauthorizedCerts": false
         },
