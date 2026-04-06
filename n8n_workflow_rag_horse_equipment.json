@@ -1,0 +1,481 @@
+{
+  "name": "RAG Demo — Конная амуниция (Horse Equipment)",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message"]
+      },
+      "id": "node-telegram-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [220, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Извлекаем текст вопроса и chat_id из сообщения Telegram\nconst msg = $input.first().json;\nconst chatId = msg.message?.chat?.id || msg.callback_query?.message?.chat?.id;\nconst text = (msg.message?.text || '').trim();\n\nif (!text || text === '/start') {\n  return [{\n    json: {\n      chatId,\n      text,\n      action: 'welcome'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    chatId,\n    text,\n    action: 'question'\n  }\n}];\n"
+      },
+      "id": "node-parse-input",
+      "name": "Parse Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-welcome",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "welcome",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-if-welcome",
+      "name": "IF Welcome",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot{{ $credentials.telegramApi.accessToken }}/sendMessage",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $('Parse Input').first().json.chatId }}"
+            },
+            {
+              "name": "text",
+              "value": "🐴 Добро пожаловать в бот-справочник по конной амуниции!\n\nЯ помогу вам разобраться в снаряжении для лошадей. Задайте любой вопрос, например:\n\n• Какие бывают виды сёдел?\n• Как подобрать уздечку для лошади?\n• Чем отличается трензельное оголовье от мундштучного?\n• Какие попоны нужны на зиму?\n• Как правильно подобрать размер подпруги?\n\nПросто напишите свой вопрос! 🏇"
+            },
+            {
+              "name": "parse_mode",
+              "value": "HTML"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-welcome-reply",
+      "name": "Welcome Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 160]
+    },
+    {
+      "parameters": {
+        "model": "text-embedding-3-small",
+        "text": "={{ $('Parse Input').first().json.text }}",
+        "options": {}
+      },
+      "id": "node-embed-query",
+      "name": "Embed Query (OpenAI)",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1,
+      "position": [920, 440],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CRED_ID",
+          "name": "OpenAI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-documents",
+        "qdrantCollection": "horse_equipment",
+        "topK": 5,
+        "options": {}
+      },
+      "id": "node-qdrant-retrieve",
+      "name": "Qdrant Vector Store",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1,
+      "position": [1160, 440],
+      "credentials": {
+        "qdrantApi": {
+          "id": "QDRANT_CRED_ID",
+          "name": "Qdrant"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Собираем контекст из найденных чанков\nconst items = $input.all();\nconst chunks = items.map((item, i) => {\n  const doc = item.json;\n  const text = doc.pageContent || doc.text || doc.content || JSON.stringify(doc);\n  const source = doc.metadata?.source || doc.metadata?.title || `Чанк ${i + 1}`;\n  const score = doc.score ? ` (релевантность: ${(doc.score * 100).toFixed(1)}%)` : '';\n  return `[${source}${score}]\\n${text}`;\n}).filter(c => c.length > 0);\n\nconst context = chunks.join('\\n\\n---\\n\\n');\nconst question = $('Parse Input').first().json.text;\nconst chatId = $('Parse Input').first().json.chatId;\n\nreturn [{\n  json: {\n    chatId,\n    question,\n    context,\n    chunkCount: chunks.length\n  }\n}];\n"
+      },
+      "id": "node-build-context",
+      "name": "Build RAG Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 440]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "model": "gpt-4o",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Ты — экспертный AI-ассистент по конной амуниции и снаряжению для лошадей.\n\nТвоя задача — отвечать на вопросы пользователя, опираясь ТОЛЬКО на предоставленный контекст из базы знаний.\n\nПравила:\n1. Отвечай на русском языке.\n2. Используй ТОЛЬКО информацию из контекста ниже. Не придумывай факты.\n3. Если в контексте нет нужной информации, честно скажи: «К сожалению, в моей базе знаний нет точного ответа на этот вопрос. Попробуйте переформулировать.»\n4. Структурируй ответ: используй абзацы, списки, эмодзи для наглядности.\n5. Если уместно, дай практический совет по выбору или использованию амуниции.\n6. В конце кратко укажи источники (если есть в метаданных).\n\nКатегории амуниции, которые ты знаешь:\n🪖 Защитное снаряжение (шлемы, жилеты, ногавки)\n🐎 Сёдла (выездковые, конкурные, универсальные, вестерн)\n⛓️ Оголовья и уздечки (трензельные, мундштучные, хакаморы)\n🧣 Попоны (зимние, дождевые, транспортировочные, денниковые)\n🦵 Защита ног лошади (бинты, ногавки, колокольчики)\n👢 Амуниция всадника (краги, бриджи, перчатки)\n🔧 Уход и аксессуары (щётки, копытные крючки, средства для кожи)"
+            },
+            {
+              "role": "user",
+              "content": "=Контекст из базы знаний ({{ $json.chunkCount }} фрагментов):\n\n{{ $json.context }}\n\n---\n\nВопрос пользователя: {{ $json.question }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 1500
+        }
+      },
+      "id": "node-openai-generate",
+      "name": "Generate Answer (GPT-4o)",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [1640, 440],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CRED_ID",
+          "name": "OpenAI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot{{ $credentials.telegramApi.accessToken }}/sendMessage",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $('Parse Input').first().json.chatId }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ $('Generate Answer (GPT-4o)').first().json.message?.content || $('Generate Answer (GPT-4o)').first().json.text || 'Не удалось сгенерировать ответ.' }}"
+            },
+            {
+              "name": "parse_mode",
+              "value": "HTML"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-send-answer",
+      "name": "Send Answer to Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1880, 440],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot{{ $credentials.telegramApi.accessToken }}/sendMessage",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $('Parse Input').first().json.chatId }}"
+            },
+            {
+              "name": "text",
+              "value": "⚠️ Произошла ошибка при обработке вашего вопроса. Пожалуйста, попробуйте ещё раз или переформулируйте вопрос."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-error-reply",
+      "name": "Error Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1880, 660],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Логируем запрос и ответ для аналитики\nconst now = new Date().toISOString();\nconst question = $('Parse Input').first().json.text;\nconst chatId = $('Parse Input').first().json.chatId;\nconst chunkCount = $('Build RAG Context').first().json.chunkCount;\nconst answer = $('Generate Answer (GPT-4o)').first().json.message?.content || $('Generate Answer (GPT-4o)').first().json.text || '';\n\nreturn [{\n  json: {\n    timestamp: now,\n    chat_id: chatId,\n    question: question,\n    chunks_found: chunkCount,\n    answer_length: answer.length,\n    answer_preview: answer.substring(0, 200) + (answer.length > 200 ? '...' : '')\n  }\n}];\n"
+      },
+      "id": "node-log-prepare",
+      "name": "Prepare Log Entry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2120, 440]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_GOOGLE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "RAG Logs"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ $json.timestamp }}",
+            "chat_id": "={{ $json.chat_id }}",
+            "question": "={{ $json.question }}",
+            "chunks_found": "={{ $json.chunks_found }}",
+            "answer_length": "={{ $json.answer_length }}",
+            "answer_preview": "={{ $json.answer_preview }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "node-google-sheets",
+      "name": "Log to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2340, 440],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GSHEETS_CRED_ID",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================\n// SEED KNOWLEDGE BASE — Конная амуниция\n// =====================================================\n// Этот нод генерирует чанки для загрузки в Qdrant.\n// Запустите этот воркфлоу один раз для заполнения базы.\n// =====================================================\n\nconst documents = [\n  {\n    title: \"Виды сёдел\",\n    category: \"Сёдла\",\n    content: \"Существует несколько основных типов сёдел для верховой езды:\\n\\n1. **Выездковое седло** — имеет глубокую посадку и длинные крылья, позволяющие всаднику держать ногу в вытянутом положении. Идеально для дрессуры и выездки.\\n\\n2. **Конкурное (прыжковое) седло** — более плоское с выдвинутыми вперёд крыльями и коленными упорами. Обеспечивает свободу движений лошади при прыжках.\\n\\n3. **Универсальное седло** — компромисс между выездковым и конкурным. Подходит для любительской езды, обучения и прогулок.\\n\\n4. **Вестерн-седло** — тяжёлое седло с рожком (horn) спереди, широкими полками, предназначено для длительных поездок и работы со скотом.\\n\\n5. **Скаковое седло** — максимально лёгкое (до 500 г), маленькое, для скачек. Всадник стоит в стременах.\\n\\n6. **Казачье/строевое седло** — традиционное седло с высокой лукой и подушками, рассчитано на долгие переходы.\"\n  },\n  {\n    title: \"Подбор седла по размеру\",\n    category: \"Сёдла\",\n    content: \"Правильный подбор седла критически важен для здоровья лошади и комфорта всадника.\\n\\n**Для лошади:**\\n- Ширина ленчика должна соответствовать форме холки. Узкий ленчик давит на холку, широкий — съезжает.\\n- Между передней лукой и холкой должно помещаться 2-3 пальца.\\n- Седло не должно давить на поясницу — оставьте зазор за последним ребром.\\n- Подушки должны равномерно прилегать к спине без мостов и точек давления.\\n\\n**Для всадника:**\\n- Размер сиденья: от 15 до 18 дюймов. Между бедром и задней лукой должна помещаться ладонь.\\n- Крылья должны соответствовать длине ноги.\\n\\n**Совет:** Всегда примеряйте седло на конкретную лошадь. Используйте подседельник и подождите 15-20 минут под седлом, затем проверьте потоотделение — оно должно быть равномерным.\"\n  },\n  {\n    title: \"Оголовья и уздечки\",\n    category: \"Оголовья\",\n    content: \"Оголовье — система ремней на голове лошади, к которой крепится трензель или другое удило.\\n\\n**Типы оголовий:**\\n\\n1. **Трензельное оголовье** — простейшее, состоит из налобника, нащёчных ремней, подбородного ремня и затылочного. Используется с трензелем (простым удилом).\\n\\n2. **Мундштучное оголовье** — двойное, для двух удил: трензеля и мундштука. Применяется в выездке высокого уровня. Даёт тонкое управление.\\n\\n3. **Хакамора** — безтрензельное оголовье, воздействует на нос и подбородок. Бывает механическая (с рычагами) и классическая (боковая). Подходит лошадям с чувствительным ртом.\\n\\n4. **Кавессон** — оголовье для работы на корде с капсюлем на переносье.\\n\\n**Материалы:** Кожа (классика, требует ухода), синтетика (BioThane — не требует ухода, водостойкая), верёвочные (натуральная верховая езда).\"\n  },\n  {\n    title: \"Трензеля и удила\",\n    category: \"Оголовья\",\n    content: \"Трензель — металлическое (или из других материалов) удило, расположенное во рту лошади.\\n\\n**Виды трензелей:**\\n\\n1. **Простой трензель (snaffle)** — одинарное кольцо, мягкое воздействие. Бывает одинарно-ломаный, двойно-ломаный (french link), прямой.\\n\\n2. **Пелам** — комбинация трензеля и мундштука. Имеет рычаг и цепочку. Промежуточный вариант.\\n\\n3. **Мундштук (curb bit)** — рычажное удило, усиливает давление. Только для опытных всадников.\\n\\n4. **D-образный трензель** — с D-образными кольцами, не защемляет губы.\\n\\n**Материалы:**\\n- Нержавеющая сталь — самый распространённый, нейтральный вкус.\\n- Медный сплав (Aurigan, Sensogan) — стимулирует слюноотделение, мягче.\\n- Резиновые/пластиковые — мягкие, для чувствительных лошадей.\\n- Sweet iron — окисляется, создаёт сладковатый вкус, лошади охотнее принимают.\\n\\n**Размер:** Измеряется от кольца до кольца. Правильный трензель выступает на 0.5 см с каждой стороны рта.\"\n  },\n  {\n    title: \"Попоны для лошадей\",\n    category: \"Попоны\",\n    content: \"Попоны защищают лошадь от погодных условий, насекомых и механических повреждений.\\n\\n**Типы попон:**\\n\\n1. **Зимняя (outdoor) попона** — утеплённая, водонепроницаемая. Плотность наполнителя: 100-400 г. Для лошадей на уличном содержании. Денье ткани от 600D до 1680D.\\n\\n2. **Денниковая (stable) попона** — для содержания в деннике. Легче уличной, не водостойкая. 100-300 г наполнителя.\\n\\n3. **Дождевая попона** — без утеплителя, водонепроницаемая. Для прохладных дождливых дней.\\n\\n4. **Флисовая попона** — для сушки после работы, как вкладыш под зимнюю попону. Отводит влагу.\\n\\n5. **Антимоскитная (fly sheet)** — тонкая сетка, защищает от мух и ультрафиолета.\\n\\n6. **Транспортировочная попона** — защищает при перевозке в коневозе.\\n\\n**Размеры:** Измеряются от центра груди до задней точки крупа (в см или дюймах). Стандартные: 125-165 см.\\n\\n**Крепления:** Перекрёстные подхвостные ремни, грудные застёжки, подбрюшные ремни.\"\n  },\n  {\n    title: \"Защита ног лошади\",\n    category: \"Защита\",\n    content: \"Ноги — самая уязвимая часть лошади. Правильная защита предотвращает травмы.\\n\\n**Виды защиты:**\\n\\n1. **Ногавки (boots):**\\n   - Передние (tendon boots) — защищают сухожилия.\\n   - Задние (fetlock boots) — защищают путовый сустав.\\n   - Транспортировочные — длинные, закрывают от запястья до копыта.\\n   - Ногавки с мехом — с подкладкой из овчины для чувствительной кожи.\\n\\n2. **Бинты:**\\n   - Рабочие (polo wraps) — флисовые, поддержка сухожилий при работе.\\n   - Стояночные (standing wraps) — хлопковые, с подкладками, для отдыха.\\n   - Важно: бинтование требует навыка! Неправильное натяжение повреждает сухожилия.\\n\\n3. **Колокольчики (bell boots)** — защищают венчик и пятку от засечек задними ногами.\\n\\n4. **Кобуры (hoof boots)** — временная замена подковы для прогулок.\\n\\n**Материалы:** Неопрен, кожа, пластик (жёсткие ногавки), синтетический мех.\"\n  },\n  {\n    title: \"Подпруга и вспомогательное снаряжение\",\n    category: \"Сёдла\",\n    content: \"**Подпруга** — ремень, фиксирующий седло на спине лошади.\\n\\n**Виды подпруг:**\\n- Кожаные — классика, долговечны, дышат.\\n- Синтетические (неопрен, ПВХ) — легко моются, не скользят.\\n- Анатомические — с вырезом в зоне локтя, снижают давление.\\n- Подпруги с эластичными вставками — амортизируют движения.\\n\\n**Размеры:** От 80 до 150 см. Правильная подпруга: между ней и животом лошади помещаются 2 пальца.\\n\\n**Дополнительное снаряжение:**\\n- **Мартингал** — ремень от подпруги к трензелю через грудь. Не даёт лошади задирать голову.\\n- **Шпрунт (развязки)** — для корректировки положения головы при работе на корде.\\n- **Нагрудник** — не даёт седлу сползать назад на лошадях с плоской холкой.\\n- **Подхвостник** — не даёт седлу сползать вперёд на спусках.\\n- **Вальтрап / потник** — подкладка под седло, впитывает пот, амортизирует.\"\n  },\n  {\n    title: \"Амуниция всадника\",\n    category: \"Всадник\",\n    content: \"Правильная экипировка всадника обеспечивает безопасность и комфорт.\\n\\n**Обязательное снаряжение:**\\n\\n1. **Шлем** — ОБЯЗАТЕЛЕН. Стандарты: VG1 01.040 (Европа), ASTM F1163 (США). Менять после каждого падения. Современные шлемы лёгкие (250-350 г) с вентиляцией.\\n\\n2. **Сапоги/краги** — с гладкой подошвой и небольшим каблуком (1.5-2 см), чтобы нога не проскальзывала в стремя. Краги + ботинки — бюджетная альтернатива сапогам.\\n\\n3. **Бриджи** — с полной или коленной леёй (grip). Материал: хлопок/эластан или технические ткани с силиконовой леёй.\\n\\n**Рекомендуемое:**\\n- **Защитный жилет** — особенно для кросса и начинающих.\\n- **Перчатки** — улучшают хват повода, защищают от мозолей.\\n- **Хлыст (стек)** — вспомогательное средство. Длина: выездковый 100-120 см, конкурный 60-75 см.\\n- **Шпоры** — только для опытных всадников с независимой посадкой.\"\n  },\n  {\n    title: \"Уход за кожаной амуницией\",\n    category: \"Уход\",\n    content: \"Кожаная амуниция требует регулярного ухода для долговечности и безопасности.\\n\\n**Ежедневный уход:**\\n1. Протрите влажной губкой от пота и грязи.\\n2. Нанесите глицериновое мыло (седельное мыло) — очищает и увлажняет.\\n\\n**Еженедельный уход:**\\n1. Полная чистка: разобрать оголовье, промыть все ремни.\\n2. Нанести кондиционер для кожи (Leather Balsam, Neatsfoot Oil).\\n3. Проверить швы, пряжки и крепления на износ.\\n\\n**Важно:**\\n- Никогда не сушите кожу на батарее или солнце — она потрескается.\\n- Храните в сухом проветриваемом помещении.\\n- Новое седло нуждается в обкатке — смягчайте маслом первые недели.\\n- Заплесневевшую кожу обработайте уксусным раствором, затем кондиционером.\\n\\n**Средства:** Effax, Passier, Carr & Day & Martin, Belveder — проверенные бренды средств для ухода.\"\n  },\n  {\n    title: \"Как определить размер оголовья\",\n    category: \"Оголовья\",\n    content: \"Правильно подобранное оголовье не натирает и не давит.\\n\\n**Стандартные размеры:**\\n- Pony — для пони до 140 см в холке.\\n- Cob — для лошадей 140-160 см с небольшой головой.\\n- Full — для большинства лошадей 160-175 см.\\n- Extra Full / Warmblood — для крупных голов (тяжеловозы, некоторые теплокровные).\\n\\n**Проверка подгонки:**\\n1. Налобник: не давит на уши, не морщит кожу. Между ним и лбом — палец.\\n2. Нащёчные ремни: трензель образует 1-2 складки в углу рта.\\n3. Подбородный ремень: между ним и ганашем — кулак.\\n4. Капсюль: между ним и переносьем — 2 пальца.\\n\\n**Совет:** Если между размерами — берите больший и подгоняйте ремнями. Сжатое оголовье вызывает дискомфорт и сопротивление лошади.\"\n  }\n];\n\n// Возвращаем массив документов для загрузки\nreturn documents.map(doc => ({\n  json: {\n    pageContent: doc.content,\n    metadata: {\n      title: doc.title,\n      category: doc.category,\n      source: 'knowledge_base_v1'\n    }\n  }\n}));\n"
+      },
+      "id": "node-seed-data",
+      "name": "Seed Knowledge Base",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 700]
+    },
+    {
+      "parameters": {
+        "model": "text-embedding-3-small",
+        "options": {}
+      },
+      "id": "node-embed-seed",
+      "name": "Embed Documents (OpenAI)",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1,
+      "position": [500, 700],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CRED_ID",
+          "name": "OpenAI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "qdrantCollection": "horse_equipment",
+        "options": {}
+      },
+      "id": "node-qdrant-insert",
+      "name": "Qdrant Insert Documents",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1,
+      "position": [740, 700],
+      "credentials": {
+        "qdrantApi": {
+          "id": "QDRANT_CRED_ID",
+          "name": "Qdrant"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Input": {
+      "main": [
+        [
+          {
+            "node": "IF Welcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Welcome": {
+      "main": [
+        [
+          {
+            "node": "Welcome Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Embed Query (OpenAI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embed Query (OpenAI)": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Vector Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Vector Store": {
+      "main": [
+        [
+          {
+            "node": "Build RAG Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build RAG Context": {
+      "main": [
+        [
+          {
+            "node": "Generate Answer (GPT-4o)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Answer (GPT-4o)": {
+      "main": [
+        [
+          {
+            "node": "Send Answer to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Answer to Telegram": {
+      "main": [
+        [
+          {
+            "node": "Prepare Log Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Log Entry": {
+      "main": [
+        [
+          {
+            "node": "Log to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seed Knowledge Base": {
+      "main": [
+        [
+          {
+            "node": "Embed Documents (OpenAI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embed Documents (OpenAI)": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Insert Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "active": false,
+  "pinData": {},
+  "tags": [
+    {
+      "name": "RAG"
+    },
+    {
+      "name": "Horse Equipment"
+    },
+    {
+      "name": "Demo"
+    }
+  ]
+}
