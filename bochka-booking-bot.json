@@ -1,0 +1,921 @@
+{
+  "name": "Bochka Booking Bot",
+  "nodes": [
+    {
+      "id": "n1",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "bochka-telegram-trigger",
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED",
+          "name": "Telegram Bot Token"
+        }
+      },
+      "parameters": {
+        "updates": [
+          "message",
+          "callback_query"
+        ],
+        "additionalFields": {}
+      }
+    },
+    {
+      "id": "n2",
+      "name": "Router",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        250,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nlet chatId, text, username, userId, callbackQueryId;\n\nif (input.callback_query) {\n  const cq = input.callback_query;\n  chatId = cq.message.chat.id;\n  text = cq.data;\n  username = cq.from.username || String(cq.from.id);\n  userId = cq.from.id;\n  callbackQueryId = cq.id;\n} else if (input.message) {\n  const msg = input.message;\n  chatId = msg.chat.id;\n  text = msg.text || '';\n  username = msg.from.username || String(msg.from.id);\n  userId = msg.from.id;\n}\n\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.waitingForHorse) staticData.waitingForHorse = {};\n\nlet routeType = 'unknown';\nlet selectedSlot = null;\nlet cancelTime = null;\nlet hippotherapyValue = null;\n\nif (!text) text = '';\nconst t = text.trim();\n\nif (t.startsWith('/start')) {\n  routeType = 'start';\n} else if (['/schedule', '/расписание', '/book', '/запись'].includes(t)) {\n  routeType = 'schedule';\n} else if (t.startsWith('/hippotherapy')) {\n  hippotherapyValue = t.replace('/hippotherapy', '').trim();\n  routeType = 'hippotherapy';\n} else if (t.startsWith('/cancel')) {\n  const parts = t.split(' ');\n  cancelTime = parts.length > 1 ? parts[1] : null;\n  routeType = 'cancel';\n} else if (t.startsWith('book:')) {\n  selectedSlot = t.replace('book:', '');\n  staticData.waitingForHorse[String(chatId)] = selectedSlot;\n  routeType = 'ask_horse';\n} else if (staticData.waitingForHorse[String(chatId)]) {\n  selectedSlot = staticData.waitingForHorse[String(chatId)];\n  delete staticData.waitingForHorse[String(chatId)];\n  routeType = 'save_booking';\n}\n\nreturn [{\n  json: {\n    routeType,\n    chatId,\n    text: t,\n    username,\n    userId,\n    callbackQueryId,\n    selectedSlot,\n    cancelTime,\n    hippotherapyValue\n  }\n}];"
+      }
+    },
+    {
+      "id": "n3",
+      "name": "Route Switch",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        500,
+        300
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "cond_start",
+                    "leftValue": "={{ $json.routeType }}",
+                    "rightValue": "start",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "cond_schedule",
+                    "leftValue": "={{ $json.routeType }}",
+                    "rightValue": "schedule",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "cond_hippotherapy",
+                    "leftValue": "={{ $json.routeType }}",
+                    "rightValue": "hippotherapy",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "cond_cancel",
+                    "leftValue": "={{ $json.routeType }}",
+                    "rightValue": "cancel",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "cond_ask_horse",
+                    "leftValue": "={{ $json.routeType }}",
+                    "rightValue": "ask_horse",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "cond_save_booking",
+                    "leftValue": "={{ $json.routeType }}",
+                    "rightValue": "save_booking",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "fallbackOutput": "extra",
+        "options": {}
+      }
+    },
+    {
+      "id": "n4",
+      "name": "Send Start",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        750,
+        0
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED",
+          "name": "Telegram Bot Token"
+        }
+      },
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$credentials.telegramApi.accessToken}}/sendMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "telegramApi",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $json.chatId }}"
+            },
+            {
+              "name": "text",
+              "value": "🐴 Добро пожаловать в систему записи в бочку!\n\n📅 <b>Расписание работы:</b> 07:00 – 22:00, слоты по 30 минут\n\n<b>Команды:</b>\n/schedule — Расписание на сегодня\n/book — Записать лошадь\n/cancel ЧЧ:ММ — Отменить запись\n\n<b>Админ:</b>\n/hippotherapy ЧЧ:ММ — Установить время окончания иппотерапии\n/hippotherapy off — Снять блокировку"
+            },
+            {
+              "name": "parse_mode",
+              "value": "HTML"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n5",
+      "name": "Read Schedule",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.2,
+      "position": [
+        750,
+        200
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "SHEETS_CRED",
+          "name": "Google Sheets"
+        }
+      },
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_SPREADSHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Bookings",
+          "mode": "name"
+        },
+        "filtersUI": {},
+        "options": {}
+      }
+    },
+    {
+      "id": "n6",
+      "name": "Build Schedule",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Moscow time (UTC+3)\nconst now = new Date();\nconst moscowDate = new Date(now.getTime() + 3 * 60 * 60 * 1000);\nconst dateStr = moscowDate.toISOString().split('T')[0];\nconst [yr, mo, da] = dateStr.split('-');\nconst formattedDate = `${da}.${mo}.${yr}`;\n\n// Hippotherapy end time from static data\nconst staticData = $getWorkflowStaticData('global');\nconst hippEndTime = staticData.hippEndTime || null;\n\n// chatId from Router\nconst chatId = $('Router').first().json.chatId;\n\n// Build bookings map for today\nconst bookingMap = {};\nfor (const item of $input.all()) {\n  const b = item.json;\n  if (b.date === dateStr && b.horse_name && b.horse_name.trim() !== '' && b.horse_name !== '[ОТМЕНЕНО]') {\n    bookingMap[b.time] = b.horse_name;\n  }\n}\n\n// Generate 30 slots: 07:00 - 21:30\nconst slots = [];\nfor (let h = 7; h <= 21; h++) {\n  for (let m = 0; m < 60; m += 30) {\n    slots.push(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`);\n  }\n}\n\n// Build message and inline keyboard\nlet msg = `📅 Расписание бочки на ${formattedDate}\\n\\n`;\nconst keyboard = [];\n\nfor (const slot of slots) {\n  if (hippEndTime && slot < hippEndTime) {\n    msg += `🏥 ${slot} — Иппотерапия\\n`;\n  } else if (bookingMap[slot]) {\n    msg += `🐴 ${slot} — ${bookingMap[slot]}\\n`;\n  } else {\n    keyboard.push([{ text: `${slot} — Свободно ✅`, callback_data: `book:${slot}` }]);\n  }\n}\n\nif (keyboard.length === 0 && slots.every(s => bookingMap[s] || (hippEndTime && s < hippEndTime))) {\n  msg += '\\nВсе слоты заняты.';\n}\n\nreturn [{\n  json: {\n    chatId,\n    messageText: msg,\n    replyMarkup: JSON.stringify({ inline_keyboard: keyboard })\n  }\n}];"
+      }
+    },
+    {
+      "id": "n7",
+      "name": "Send Schedule",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1250,
+        200
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED",
+          "name": "Telegram Bot Token"
+        }
+      },
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$credentials.telegramApi.accessToken}}/sendMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "telegramApi",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $json.chatId }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ $json.messageText }}"
+            },
+            {
+              "name": "parse_mode",
+              "value": "HTML"
+            },
+            {
+              "name": "reply_markup",
+              "value": "={{ $json.replyMarkup }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n8",
+      "name": "Parse Hippotherapy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        750,
+        400
+      ],
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst chatId = data.chatId;\nconst val = data.hippotherapyValue;\n\nconst staticData = $getWorkflowStaticData('global');\n\nlet responseText, settingsValue;\n\nif (!val || val === 'off') {\n  staticData.hippEndTime = null;\n  settingsValue = 'off';\n  responseText = '✅ Блокировка иппотерапии снята. Все слоты доступны для записи.';\n} else {\n  const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;\n  if (!timeRegex.test(val)) {\n    return [{\n      json: {\n        chatId,\n        responseText: '❌ Неверный формат. Используйте: /hippotherapy 10:30 или /hippotherapy off',\n        settingsKey: null,\n        settingsValue: null\n      }\n    }];\n  }\n  staticData.hippEndTime = val;\n  settingsValue = val;\n  responseText = `✅ Иппотерапия установлена до ${val}. Слоты до ${val} заблокированы.`;\n}\n\nreturn [{\n  json: {\n    chatId,\n    responseText,\n    settingsKey: 'hippotherapy_end_time',\n    settingsValue\n  }\n}];"
+      }
+    },
+    {
+      "id": "n9",
+      "name": "Write Hippotherapy",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        400
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "SHEETS_CRED",
+          "name": "Google Sheets"
+        }
+      },
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_SPREADSHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Settings",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "key": "={{ $json.settingsKey }}",
+            "value": "={{ $json.settingsValue }}"
+          }
+        },
+        "matchingColumns": [
+          "key"
+        ],
+        "options": {}
+      }
+    },
+    {
+      "id": "n10",
+      "name": "Send Hippo Confirm",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1250,
+        400
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED",
+          "name": "Telegram Bot Token"
+        }
+      },
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$credentials.telegramApi.accessToken}}/sendMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "telegramApi",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $json.chatId }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ $json.responseText }}"
+            },
+            {
+              "name": "parse_mode",
+              "value": "HTML"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n11",
+      "name": "Prepare Cancel",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        750,
+        600
+      ],
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst chatId = data.chatId;\nconst cancelTime = data.cancelTime;\n\nif (!cancelTime) {\n  return [{\n    json: {\n      chatId,\n      error: true,\n      responseText: '❌ Укажите время для отмены. Пример: /cancel 11:30',\n      cancelTime: null,\n      dateStr: null\n    }\n  }];\n}\n\nconst timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;\nif (!timeRegex.test(cancelTime)) {\n  return [{\n    json: {\n      chatId,\n      error: true,\n      responseText: '❌ Неверный формат времени. Пример: /cancel 11:30',\n      cancelTime: null,\n      dateStr: null\n    }\n  }];\n}\n\nconst now = new Date();\nconst moscowDate = new Date(now.getTime() + 3 * 60 * 60 * 1000);\nconst dateStr = moscowDate.toISOString().split('T')[0];\n\nreturn [{\n  json: {\n    chatId,\n    error: false,\n    cancelTime,\n    dateStr\n  }\n}];"
+      }
+    },
+    {
+      "id": "n12",
+      "name": "Read For Cancel",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        600
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "SHEETS_CRED",
+          "name": "Google Sheets"
+        }
+      },
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_SPREADSHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Bookings",
+          "mode": "name"
+        },
+        "filtersUI": {},
+        "options": {}
+      }
+    },
+    {
+      "id": "n13",
+      "name": "Cancel Booking",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1250,
+        600
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const allItems = $input.all();\nconst prepData = $('Prepare Cancel').first().json;\nconst { chatId, cancelTime, dateStr, error } = prepData;\n\nif (error) {\n  return [{ json: { chatId, found: false, responseText: prepData.responseText, cancelTime, dateStr } }];\n}\n\nconst booking = allItems.find(item =>\n  item.json.date === dateStr &&\n  item.json.time === cancelTime &&\n  item.json.horse_name &&\n  item.json.horse_name.trim() !== '' &&\n  item.json.horse_name !== '[ОТМЕНЕНО]'\n);\n\nif (!booking) {\n  return [{\n    json: {\n      chatId,\n      found: false,\n      responseText: `❌ Запись на ${cancelTime} не найдена или уже отменена.`,\n      cancelTime,\n      dateStr\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    chatId,\n    found: true,\n    dateStr,\n    cancelTime,\n    horseName: booking.json.horse_name,\n    responseText: `✅ Запись лошади «${booking.json.horse_name}» на ${cancelTime} отменена.`\n  }\n}];"
+      }
+    },
+    {
+      "id": "n14",
+      "name": "Update Cancelled",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.2,
+      "position": [
+        1500,
+        600
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "SHEETS_CRED",
+          "name": "Google Sheets"
+        }
+      },
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_SPREADSHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Bookings",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "date": "={{ $json.dateStr }}",
+            "time": "={{ $json.cancelTime }}",
+            "horse_name": "[ОТМЕНЕНО]"
+          }
+        },
+        "matchingColumns": [
+          "date",
+          "time"
+        ],
+        "options": {}
+      }
+    },
+    {
+      "id": "n15",
+      "name": "Send Cancel Confirm",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1750,
+        600
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED",
+          "name": "Telegram Bot Token"
+        }
+      },
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$credentials.telegramApi.accessToken}}/sendMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "telegramApi",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $json.chatId }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ $json.responseText }}"
+            },
+            {
+              "name": "parse_mode",
+              "value": "HTML"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n16",
+      "name": "Answer Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        750,
+        800
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED",
+          "name": "Telegram Bot Token"
+        }
+      },
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$credentials.telegramApi.accessToken}}/answerCallbackQuery",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "telegramApi",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "callback_query_id",
+              "value": "={{ $json.callbackQueryId }}"
+            },
+            {
+              "name": "text",
+              "value": "Слот выбран!"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n17",
+      "name": "Ask Horse Name",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        800
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED",
+          "name": "Telegram Bot Token"
+        }
+      },
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$credentials.telegramApi.accessToken}}/sendMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "telegramApi",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $json.chatId }}"
+            },
+            {
+              "name": "text",
+              "value": "=Вы выбрали слот <b>{{ $('Router').first().json.selectedSlot }}</b>.\n\nВведите имя лошади:"
+            },
+            {
+              "name": "parse_mode",
+              "value": "HTML"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n18",
+      "name": "Prepare Booking",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        750,
+        1000
+      ],
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst chatId = data.chatId;\nconst selectedSlot = data.selectedSlot;\nconst horseName = data.text;\n\nif (!horseName || horseName.trim() === '') {\n  return [{\n    json: {\n      chatId,\n      responseText: '❌ Имя лошади не может быть пустым. Попробуйте снова через /book'\n    }\n  }];\n}\n\nconst now = new Date();\nconst moscowDate = new Date(now.getTime() + 3 * 60 * 60 * 1000);\nconst dateStr = moscowDate.toISOString().split('T')[0];\nconst bookedAt = moscowDate.toISOString().replace('T', ' ').substring(0, 16);\n\nreturn [{\n  json: {\n    chatId,\n    date: dateStr,\n    time: selectedSlot,\n    horse_name: horseName.trim(),\n    booked_by: data.username || String(data.userId || ''),\n    booked_at: bookedAt,\n    responseText: `✅ Лошадь «${horseName.trim()}» записана в бочку на ${selectedSlot}!`\n  }\n}];"
+      }
+    },
+    {
+      "id": "n19",
+      "name": "Save Booking",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        1000
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "SHEETS_CRED",
+          "name": "Google Sheets"
+        }
+      },
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_SPREADSHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Bookings",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "date": "={{ $json.date }}",
+            "time": "={{ $json.time }}",
+            "horse_name": "={{ $json.horse_name }}",
+            "booked_by": "={{ $json.booked_by }}",
+            "booked_at": "={{ $json.booked_at }}"
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n20",
+      "name": "Send Book Confirm",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1250,
+        1000
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED",
+          "name": "Telegram Bot Token"
+        }
+      },
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$credentials.telegramApi.accessToken}}/sendMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "telegramApi",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $json.chatId }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ $json.responseText }}"
+            },
+            {
+              "name": "parse_mode",
+              "value": "HTML"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Router": {
+      "main": [
+        [
+          {
+            "node": "Route Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Switch": {
+      "main": [
+        [
+          {
+            "node": "Send Start",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read Schedule",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Parse Hippotherapy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Cancel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Answer Callback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Booking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Schedule": {
+      "main": [
+        [
+          {
+            "node": "Build Schedule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Schedule": {
+      "main": [
+        [
+          {
+            "node": "Send Schedule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Hippotherapy": {
+      "main": [
+        [
+          {
+            "node": "Write Hippotherapy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Hippotherapy": {
+      "main": [
+        [
+          {
+            "node": "Send Hippo Confirm",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Cancel": {
+      "main": [
+        [
+          {
+            "node": "Read For Cancel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read For Cancel": {
+      "main": [
+        [
+          {
+            "node": "Cancel Booking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cancel Booking": {
+      "main": [
+        [
+          {
+            "node": "Update Cancelled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Cancelled": {
+      "main": [
+        [
+          {
+            "node": "Send Cancel Confirm",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answer Callback": {
+      "main": [
+        [
+          {
+            "node": "Ask Horse Name",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Booking": {
+      "main": [
+        [
+          {
+            "node": "Save Booking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Booking": {
+      "main": [
+        [
+          {
+            "node": "Send Book Confirm",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}
