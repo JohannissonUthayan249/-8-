@@ -1,0 +1,337 @@
+{
+  "name": "Fitness Body Type Bot (Telegram + OpenRouter)",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message"],
+        "additionalFields": {}
+      },
+      "id": "f6f8e33b-1949-490e-86d3-14aea7834766",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [-1008, 80],
+      "webhookId": "6fa1e3ea-db89-4d65-a57d-957c67e9b0c7"
+    },
+    {
+      "parameters": {
+        "jsCode": "const msg = $json.message ?? {};\nconst photos = Array.isArray(msg.photo) ? msg.photo : [];\nconst bestPhoto = photos.length ? photos[photos.length - 1] : null;\n\nreturn [{\n  updateId: $json.update_id ?? null,\n  chatId: msg.chat?.id ?? null,\n  userId: msg.from?.id ?? null,\n  username: msg.from?.username ?? '',\n  fullName: [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(' ').trim(),\n  text: String(msg.text ?? '').trim(),\n  caption: String(msg.caption ?? '').trim(),\n  fileId: bestPhoto?.file_id ?? '',\n  hasPhoto: Boolean(bestPhoto?.file_id),\n  sentAt: msg.date ? new Date(msg.date * 1000).toISOString() : new Date().toISOString()\n}];"
+      },
+      "id": "844ef04d-8a4a-45b2-a946-8b10fde122b7",
+      "name": "Normalize Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-784, 80]
+    },
+    {
+      "parameters": {
+        "jsCode": "const store = $getWorkflowStaticData('global');\nstore.sessions = store.sessions || {};\n\nconst userKey = String($json.userId || $json.chatId || 'unknown');\nlet session = store.sessions[userKey] || {\n  step: 'idle',\n  answers: {},\n  updatedAt: new Date().toISOString()\n};\n\nconst now = Date.now();\nconst updatedAtTs = Date.parse(session.updatedAt || 0);\nconst oneDayMs = 24 * 60 * 60 * 1000;\nif (updatedAtTs && now - updatedAtTs > oneDayMs) {\n  session = {\n    step: 'idle',\n    answers: {},\n    updatedAt: new Date().toISOString()\n  };\n}\n\nconst text = String($json.text || '').trim();\nconst lower = text.toLowerCase();\n\nconst saveSession = () => {\n  session.updatedAt = new Date().toISOString();\n  store.sessions[userKey] = session;\n};\n\nconst resetSession = () => {\n  session = {\n    step: 'awaiting_height',\n    answers: {},\n    updatedAt: new Date().toISOString()\n  };\n  saveSession();\n};\n\nconst reply = (replyText) => [{\n  ...$json,\n  action: 'reply_only',\n  replyText,\n  questionnaire: session.answers\n}];\n\nconst parseNumber = (value) => {\n  if (!value) return null;\n  const match = String(value).replace(',', '.').match(/\\d+(?:\\.\\d+)?/);\n  return match ? Number(match[0]) : null;\n};\n\nconst startCommands = ['/start', '/anketa', '/questionnaire', '/reset'];\nif (startCommands.includes(lower)) {\n  resetSession();\n  return reply(\n    '<b>Анкета начата</b>\\n\\n' +\n    'Шаг 1/5. Напиши свой <b>рост в см</b>.\\n' +\n    'Пример: <code>178</code>'\n  );\n}\n\nif (lower === '/status') {\n  const answers = session.answers || {};\n  return reply(\n    '<b>Текущий статус анкеты</b>\\n\\n' +\n    `Шаг: <code>${session.step}</code>\\n` +\n    `Рост: <code>${answers.heightCm ?? '-'}</code>\\n` +\n    `Вес: <code>${answers.weightKg ?? '-'}</code>\\n` +\n    `Цель: <code>${answers.goal ?? '-'}</code>\\n` +\n    `Опыт: <code>${answers.experience ?? '-'}</code>\\n` +\n    `Травмы: <code>${answers.injuries ?? '-'}</code>\\n\\n` +\n    'Для перезапуска отправь <code>/reset</code>.'\n  );\n}\n\nif (session.step === 'idle') {\n  return reply(\n    '<b>Привет</b>\\n\\n' +\n    'Я сначала собираю анкету, потом прошу фото и строю программу тренировок.\\n\\n' +\n    'Отправь <code>/start</code>, чтобы начать.\\n' +\n    'Команды: <code>/status</code>, <code>/reset</code>.'\n  );\n}\n\nif (session.step === 'awaiting_height') {\n  const heightCm = parseNumber(text);\n  if (!heightCm || heightCm < 120 || heightCm > 230) {\n    return reply('Не понял рост. Напиши число в сантиметрах, например <code>178</code>.');\n  }\n\n  session.answers.heightCm = heightCm;\n  session.step = 'awaiting_weight';\n  saveSession();\n  return reply(\n    '<b>Шаг 2/5</b>\\n\\n' +\n    `Рост сохранен: <code>${heightCm} см</code>\\n` +\n    'Теперь напиши <b>вес в кг</b>.\\n' +\n    'Пример: <code>82</code>'\n  );\n}\n\nif (session.step === 'awaiting_weight') {\n  const weightKg = parseNumber(text);\n  if (!weightKg || weightKg < 35 || weightKg > 300) {\n    return reply('Не понял вес. Напиши число в килограммах, например <code>82</code>.');\n  }\n\n  session.answers.weightKg = weightKg;\n  session.step = 'awaiting_goal';\n  saveSession();\n  return reply(\n    '<b>Шаг 3/5</b>\\n\\n' +\n    `Вес сохранен: <code>${weightKg} кг</code>\\n` +\n    'Какая у тебя цель?\\n' +\n    'Пример: <code>похудение</code>, <code>набор массы</code>, <code>рекомпозиция</code>.'\n  );\n}\n\nif (session.step === 'awaiting_goal') {\n  if (!text || text.length < 3) {\n    return reply('Опиши цель чуть подробнее. Например: <code>похудение</code> или <code>набор массы</code>.');\n  }\n\n  session.answers.goal = text;\n  session.step = 'awaiting_experience';\n  saveSession();\n  return reply(\n    '<b>Шаг 4/5</b>\\n\\n' +\n    `Цель сохранена: <code>${text}</code>\\n` +\n    'Какой у тебя опыт тренировок?\\n' +\n    'Пример: <code>новичок</code>, <code>занимался 1 год</code>, <code>опытный</code>.'\n  );\n}\n\nif (session.step === 'awaiting_experience') {\n  if (!text || text.length < 3) {\n    return reply('Напиши опыт тренировок текстом. Например: <code>новичок</code>.');\n  }\n\n  session.answers.experience = text;\n  session.step = 'awaiting_injuries';\n  saveSession();\n  return reply(\n    '<b>Шаг 5/5</b>\\n\\n' +\n    `Опыт сохранен: <code>${text}</code>\\n` +\n    'Есть ли травмы, боли или ограничения?\\n' +\n    'Если нет, напиши <code>нет</code>.'\n  );\n}\n\nif (session.step === 'awaiting_injuries') {\n  if (!text) {\n    return reply('Напиши ограничения текстом. Если ограничений нет, отправь <code>нет</code>.');\n  }\n\n  session.answers.injuries = text;\n  session.step = 'awaiting_photo';\n  saveSession();\n  return reply(\n    '<b>Анкета заполнена</b>\\n\\n' +\n    `Рост: <code>${session.answers.heightCm} см</code>\\n` +\n    `Вес: <code>${session.answers.weightKg} кг</code>\\n` +\n    `Цель: <code>${session.answers.goal}</code>\\n` +\n    `Опыт: <code>${session.answers.experience}</code>\\n` +\n    `Травмы/ограничения: <code>${session.answers.injuries}</code>\\n\\n` +\n    'Теперь пришли <b>одно фото</b> в полный рост или по пояс.\\n' +\n    'Можно добавить подпись: <code>дома, 3 тренировки в неделю</code>.'\n  );\n}\n\nif (session.step === 'awaiting_photo') {\n  if (!$json.hasPhoto) {\n    return reply('Жду фото. Пришли одно фото в полный рост или по пояс. Для перезапуска анкеты отправь <code>/reset</code>.');\n  }\n\n  session.answers.photoComment = $json.caption || '';\n  session.step = 'analyzing';\n  saveSession();\n\n  return [{\n    ...$json,\n    action: 'analyze',\n    replyText: '',\n    questionnaire: session.answers\n  }];\n}\n\nif (session.step === 'analyzing') {\n  return reply('Сейчас уже обрабатываю предыдущее фото. Если нужно начать заново, отправь <code>/reset</code>.');\n}\n\nreturn reply('Не удалось определить шаг анкеты. Отправь <code>/reset</code> и начни заново.');"
+      },
+      "id": "c0f88bae-8c8f-4306-ad59-2598d676644b",
+      "name": "Questionnaire Router",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-560, 80]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d6e021a7-fdd1-46fd-adfa-ea1d371f1700",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "analyze",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d946bce2-69c0-4bc1-bb9f-e324a6a469d3",
+      "name": "Should Analyze?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-336, 80]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.replyText }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "f6423660-7b8c-4f50-bce7-6643e147a8e0",
+      "name": "Send Bot Reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [560, 176],
+      "webhookId": "dd0cb86c-c9f1-465c-b4a5-88d90cafd5cd"
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.fileId }}",
+        "additionalFields": {}
+      },
+      "id": "0a9d1348-b1a7-4819-80a0-27b2bc415ede",
+      "name": "Get Telegram File",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [-112, 0],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "webhookId": "82a58d69-c94c-43cc-9121-7d5cc278f2e0"
+    },
+    {
+      "parameters": {
+        "jsCode": "const binary = $input.item.binary?.data;\nif (!binary?.data) {\n  throw new Error('Не удалось получить бинарные данные фото из Telegram.');\n}\n\nconst meta = $('Questionnaire Router').first().json;\nconst q = meta.questionnaire || {};\nconst mimeType = binary.mimeType || 'image/jpeg';\nconst fileSize = Number(binary.fileSize || 0);\nconst maxSize = 15 * 1024 * 1024;\n\nif (fileSize && fileSize > maxSize) {\n  return [{\n    ...meta,\n    action: 'reply_only',\n    replyText: 'Фото слишком большое. Пришли изображение до 15 МБ.',\n    questionnaire: q\n  }];\n}\n\nif (!mimeType.startsWith('image/')) {\n  return [{\n    ...meta,\n    action: 'reply_only',\n    replyText: 'Нужна именно фотография. Пришли изображение в формате JPG или PNG.',\n    questionnaire: q\n  }];\n}\n\nreturn [{\n  ...meta,\n  questionnaire: q,\n  action: 'analyze_ready',\n  mimeType,\n  dataUrl: `data:${mimeType};base64,${binary.data}`\n}];"
+      },
+      "id": "08e5c26f-31c7-4b67-9670-fa8e16b8e257",
+      "name": "Build Vision Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [112, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d5c6185b-b72d-4bd8-b34d-0f76d5384662",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "analyze_ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "36c1e822-1982-47d9-8d3e-7108a9dddb0b",
+      "name": "Payload Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [336, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  model: 'openai/gpt-4o-mini',\n  messages: [\n    {\n      role: 'system',\n      content: 'You are a Telegram fitness assistant. You provide only a visual heuristic from a body photo plus questionnaire data, not a diagnosis and not a guaranteed body-type classification. Write all free-text fields in Russian. Be conservative. Mention uncertainty clearly. Build a beginner-safe 4-week starter plan. Respect injuries and limitations from the questionnaire. If the image quality is poor or the body shape is unclear, say so. If the image may depict a minor, refuse and ask for an adult to contact support.'\n    },\n    {\n      role: 'user',\n      content: [\n        {\n          type: 'text',\n          text: `Анкета пользователя:\\nРост: ${$json.questionnaire.heightCm} см\\nВес: ${$json.questionnaire.weightKg} кг\\nЦель: ${$json.questionnaire.goal}\\nОпыт: ${$json.questionnaire.experience}\\nТравмы/ограничения: ${$json.questionnaire.injuries}\\nКомментарий к фото: ${$json.questionnaire.photoComment || 'не указан'}\\n\\nПо фото и анкете дай визуальную гипотезу по типу телосложения и составь программу тренировок. Если травмы или ограничения мешают части упражнений, подбери безопасные альтернативы.`\n        },\n        {\n          type: 'image_url',\n          image_url: {\n            url: $json.dataUrl,\n            detail: 'high'\n          }\n        }\n      ]\n    }\n  ],\n  response_format: {\n    type: 'json_schema',\n    json_schema: {\n      name: 'fitness_body_type_plan_with_questionnaire',\n      strict: true,\n      schema: {\n        type: 'object',\n        additionalProperties: false,\n        properties: {\n          bodyType: {\n            type: 'string',\n            enum: ['ectomorph', 'mesomorph', 'endomorph', 'mixed', 'unclear']\n          },\n          confidence: {\n            type: 'integer'\n          },\n          rationale: {\n            type: 'array',\n            items: { type: 'string' }\n          },\n          limitations: {\n            type: 'array',\n            items: { type: 'string' }\n          },\n          strategy: {\n            type: 'array',\n            items: { type: 'string' }\n          },\n          schedule: {\n            type: 'array',\n            items: {\n              type: 'object',\n              additionalProperties: false,\n              properties: {\n                day: { type: 'string' },\n                focus: { type: 'string' },\n                warmup: { type: 'string' },\n                exercises: {\n                  type: 'array',\n                  items: { type: 'string' }\n                },\n                cardio: { type: 'string' },\n                alternativesForInjuries: {\n                  type: 'array',\n                  items: { type: 'string' }\n                },\n                notes: { type: 'string' }\n              },\n              required: ['day', 'focus', 'warmup', 'exercises', 'cardio', 'alternativesForInjuries', 'notes']\n            }\n          },\n          progression: {\n            type: 'array',\n            items: { type: 'string' }\n          },\n          nutrition: {\n            type: 'array',\n            items: { type: 'string' }\n          },\n          safety: {\n            type: 'array',\n            items: { type: 'string' }\n          },\n          followUpQuestions: {\n            type: 'array',\n            items: { type: 'string' }\n          }\n        },\n        required: ['bodyType', 'confidence', 'rationale', 'limitations', 'strategy', 'schedule', 'progression', 'nutrition', 'safety', 'followUpQuestions']\n      }\n    }\n  }\n} }}",
+        "options": {}
+      },
+      "id": "17a0cce9-e5f4-4940-8bb9-0a61f52ea09e",
+      "name": "Analyze Physique",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [560, -48],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "const meta = $('Build Vision Payload').first().json;\n\nconst fallbackReply = (text) => [{\n  chatId: meta.chatId,\n  userId: meta.userId,\n  reply: text\n}];\n\n// OpenRouter Chat Completions format: choices[0].message.content\nconst rawText = $json.choices?.[0]?.message?.content || '';\n\nif (!rawText) {\n  return fallbackReply('Сервис анализа временно не смог обработать фото. Попробуй еще раз через пару минут или отправь /reset.');\n}\n\nlet parsed;\ntry {\n  parsed = typeof rawText === 'string' ? JSON.parse(rawText) : rawText;\n} catch (error) {\n  return fallbackReply('Сервис анализа вернул некорректный ответ. Попробуй повторить позже.');\n}\n\nconst requiredFields = ['bodyType', 'confidence', 'rationale', 'limitations', 'strategy', 'schedule', 'progression', 'nutrition', 'safety', 'followUpQuestions'];\nconst missing = requiredFields.filter((field) => parsed[field] === undefined || parsed[field] === null);\nif (missing.length) {\n  return fallbackReply(`Модель вернула неполный ответ. Не хватает полей: ${missing.join(', ')}.`);\n}\n\nconst q = meta.questionnaire || {};\nconst esc = (value) => String(value ?? '')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;');\n\nconst bodyTypeMap = {\n  ectomorph: 'Эктоморф',\n  mesomorph: 'Мезоморф',\n  endomorph: 'Эндоморф',\n  mixed: 'Смешанный тип',\n  unclear: 'Неопределенно'\n};\n\nconst listBlock = (items) => (items || []).map((item) => `• ${esc(item)}`).join('\\n');\n\nconst schedule = (parsed.schedule || []).map((day) => {\n  const exercises = (day.exercises || []).map((exercise) => `• ${esc(exercise)}`).join('\\n');\n  const alternatives = (day.alternativesForInjuries || []).map((item) => `• ${esc(item)}`).join('\\n');\n\n  return `<b>${esc(day.day)}:</b> ${esc(day.focus)}\\n` +\n    `Разминка: ${esc(day.warmup)}\\n` +\n    `${exercises}\\n` +\n    `Кардио: ${esc(day.cardio)}\\n` +\n    `Альтернативы с учетом ограничений:\\n${alternatives}\\n` +\n    `Комментарий: ${esc(day.notes)}`;\n}).join('\\n\\n');\n\nconst reply = [\n  '<b>Анкета</b>',\n  `Рост: <code>${esc(q.heightCm)} см</code>`,\n  `Вес: <code>${esc(q.weightKg)} кг</code>`,\n  `Цель: <code>${esc(q.goal)}</code>`,\n  `Опыт: <code>${esc(q.experience)}</code>`,\n  `Ограничения: <code>${esc(q.injuries)}</code>`,\n  '',\n  '<b>Оценка по фото</b>',\n  `<b>Вероятный тип:</b> ${esc(bodyTypeMap[parsed.bodyType] || parsed.bodyType)}`,\n  `<b>Уверенность:</b> ${esc(parsed.confidence)}%`,\n  '',\n  '<b>Почему такой вывод</b>',\n  listBlock(parsed.rationale),\n  '',\n  '<b>Ограничения оценки</b>',\n  listBlock(parsed.limitations),\n  '',\n  '<b>Стратегия тренировок</b>',\n  listBlock(parsed.strategy),\n  '',\n  '<b>Программа на 4 недели</b>',\n  schedule,\n  '',\n  '<b>Как повышать нагрузку</b>',\n  listBlock(parsed.progression),\n  '',\n  '<b>Питание и восстановление</b>',\n  listBlock(parsed.nutrition),\n  '',\n  '<b>Безопасность</b>',\n  listBlock(parsed.safety),\n  '',\n  '<b>Что еще уточнить</b>',\n  listBlock(parsed.followUpQuestions),\n  '',\n  'Чтобы пройти анкету заново, отправь <code>/reset</code>.'\n].join('\\n');\n\nreturn [{\n  chatId: meta.chatId,\n  userId: meta.userId,\n  reply\n}];"
+      },
+      "id": "bf26050f-55f2-4bd2-982d-1b3ec5834f2f",
+      "name": "Format Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [784, -48]
+    },
+    {
+      "parameters": {
+        "jsCode": "const store = $getWorkflowStaticData('global');\nstore.sessions = store.sessions || {};\nconst userKey = String($json.userId || $json.chatId || 'unknown');\n\nstore.sessions[userKey] = {\n  step: 'idle',\n  answers: {},\n  updatedAt: new Date().toISOString(),\n  lastCompletedAt: new Date().toISOString()\n};\n\nreturn [$input.item];"
+      },
+      "id": "e135e194-382d-4d14-a2d3-41ee711d8d9f",
+      "name": "Finalize Session",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1008, -48]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.reply }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "4e1a1ebf-8f2b-4de9-900c-5d47fd05948f",
+      "name": "Send Result",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1232, -48],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "webhookId": "910040ea-945d-4c4b-b19e-a06383263280"
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Update": {
+      "main": [
+        [
+          {
+            "node": "Questionnaire Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Questionnaire Router": {
+      "main": [
+        [
+          {
+            "node": "Should Analyze?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Analyze?": {
+      "main": [
+        [
+          {
+            "node": "Get Telegram File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Bot Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Telegram File": {
+      "main": [
+        [
+          {
+            "node": "Build Vision Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Vision Payload": {
+      "main": [
+        [
+          {
+            "node": "Payload Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Payload Valid?": {
+      "main": [
+        [
+          {
+            "node": "Analyze Physique",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Bot Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Physique": {
+      "main": [
+        [
+          {
+            "node": "Format Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Reply": {
+      "main": [
+        [
+          {
+            "node": "Finalize Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Session": {
+      "main": [
+        [
+          {
+            "node": "Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "tags": []
+}
