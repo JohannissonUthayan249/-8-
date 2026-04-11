@@ -11,7 +11,13 @@
       "type": "n8n-nodes-base.telegramTrigger",
       "typeVersion": 1.2,
       "position": [-1008, 80],
-      "webhookId": "6fa1e3ea-db89-4d65-a57d-957c67e9b0c7"
+      "webhookId": "6fa1e3ea-db89-4d65-a57d-957c67e9b0c7",
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram Bot Token"
+        }
+      }
     },
     {
       "parameters": {
@@ -76,7 +82,13 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [560, 176],
-      "webhookId": "dd0cb86c-c9f1-465c-b4a5-88d90cafd5cd"
+      "webhookId": "dd0cb86c-c9f1-465c-b4a5-88d90cafd5cd",
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram Bot Token"
+        }
+      }
     },
     {
       "parameters": {
@@ -92,7 +104,13 @@
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 3000,
-      "webhookId": "82a58d69-c94c-43cc-9121-7d5cc278f2e0"
+      "webhookId": "82a58d69-c94c-43cc-9121-7d5cc278f2e0",
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram Bot Token"
+        }
+      }
     },
     {
       "parameters": {
@@ -161,7 +179,13 @@
       "position": [560, -48],
       "retryOnFail": true,
       "maxTries": 3,
-      "waitBetweenTries": 5000
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OPENROUTER_CREDENTIAL_ID",
+          "name": "OpenRouter API Key"
+        }
+      }
     },
     {
       "parameters": {
@@ -198,6 +222,12 @@
       "position": [1232, -48],
       "retryOnFail": true,
       "maxTries": 3,
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram Bot Token"
+        }
+      },
       "waitBetweenTries": 3000,
       "webhookId": "910040ea-945d-4c4b-b19e-a06383263280"
     }
